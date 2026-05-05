@@ -4,13 +4,17 @@
 extern void register_settings_tests();
 extern void register_scheduler_tests();
 extern void register_moisture_tests();
-// Phase 5+: extern more registrators here.
+extern void register_overflow_tests();
+extern void register_persisted_state_tests();
+// Phase 6+: extern more registrators here.
 
 int main(int argc, char** argv) {
     UNITY_BEGIN();
     register_settings_tests();
     register_scheduler_tests();
     register_moisture_tests();
+    register_overflow_tests();
+    register_persisted_state_tests();
     return UNITY_END();
 }
 
