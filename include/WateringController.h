@@ -14,15 +14,16 @@
 enum class WateringState { IDLE, WATERING };
 
 enum class WateringEvent {
-    None,
+    None,                  // No state transition; orchestrator should not log/notify.
     Started,
-    CompletedWet,
+    CompletedWet,          // Soil reached threshold during a cycle.
     SkippedWet,
     SkippedWetEscalated,
     Timeout,
     OverflowTripped,
     Rejected,
     WatchdogTripped,
+    Aborted,               // /stop or POST /api/stop while WATERING.
 };
 
 struct WateringHal {
@@ -128,7 +129,7 @@ public:
     // /stop command — abort cycle without advancing last_run_unix.
     WateringEvent abort() {
         if (state_ == WateringState::WATERING) {
-            return exitToIdleNoLastRunUpdate(WateringEvent::CompletedWet);
+            return exitToIdleNoLastRunUpdate(WateringEvent::Aborted);
         }
         return WateringEvent::Rejected;
     }
