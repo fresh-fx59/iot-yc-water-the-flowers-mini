@@ -30,6 +30,8 @@ public:
     }
 
     bool latched() const { return latched_; }
+    // Boot-restore from /state.json. Window is not seeded — a latched sensor cannot
+    // re-trip via pushReading; only reset() (i.e. /reset_overflow) clears the latch.
     void setLatched(bool v) { latched_ = v; }
     void reset() {
         latched_ = false;
