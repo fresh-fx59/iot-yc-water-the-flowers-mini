@@ -835,6 +835,10 @@ public:
     }
 
     static void handleTestMotor(const String& text) {
+        if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
+        if (g_controller_ptr->state() == WateringState::WATERING) { sendMessage("Already watering — refuse."); return; }
+        if (g_controller_ptr->overflowLatched()) { sendMessage("Overflow latched — run /reset_overflow first."); return; }
+        if (g_controller_ptr->halted()) { sendMessage("Halted — run /resume first."); return; }
         const char* prefix = "/test_motor ";
         int sec = text.substring(strlen(prefix)).toInt();
         if (sec < 1 || sec > 10) {

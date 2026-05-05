@@ -140,7 +140,10 @@ inline void api_settings_post() {
     if (parsed.soil_threshold  < 0  || parsed.soil_threshold  > 4095){ _send400("soil_threshold"); return; }
     if (parsed.calibration_dry < 0  || parsed.calibration_dry > 4095){ _send400("calibration_dry"); return; }
     if (parsed.calibration_wet < 0  || parsed.calibration_wet > 4095){ _send400("calibration_wet"); return; }
-    *g_settings_ptr = Settings::deriveThreshold(parsed);
+    // User-supplied threshold is authoritative — do NOT override via deriveThreshold
+    // here. The Telegram /set_threshold path also preserves user override; deriveThreshold
+    // runs only on /api/calibrate where the wet/dry capture is the user's intent.
+    *g_settings_ptr = parsed;
     saveSettings(*g_settings_ptr);
     g_controller_ptr->updateSettings(*g_settings_ptr);
     recomputeNextRun();
@@ -177,6 +180,9 @@ inline void api_test_sensor() {
 
 inline void api_test_motor() {
     if (!_bootReady()) { _send503(); return; }
+    if (g_controller_ptr->state() == WateringState::WATERING) { _send409("already_running"); return; }
+    if (g_controller_ptr->overflowLatched()) { _send409("overflow_latched"); return; }
+    if (g_controller_ptr->halted()) { _send409("halted"); return; }
     int sec = server.arg("seconds").toInt();
     if (sec < 1 || sec > 10) { _send400("seconds must be 1..10"); return; }
     digitalWrite(MOTOR_RELAY_PIN, motorOnLevel());
