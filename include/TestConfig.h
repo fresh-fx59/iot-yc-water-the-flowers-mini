@@ -21,5 +21,7 @@ static const int          OVERFLOW_DEBOUNCE_TRIP_THRESHOLD = 5;
 
 static const int CONSECUTIVE_SKIPS_WET_ALERT_THRESHOLD = 2;
 
+static const unsigned long GLOBAL_WATCHDOG_MARGIN_MS = 5000UL;
+
 #endif
 #endif

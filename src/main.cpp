@@ -19,3 +19,9 @@ void setup() {
 void loop() {
     delay(1000);
 }
+
+#ifndef NATIVE_TEST
+#include "DS3231RTC.h"
+#include "WateringController.h"
+time_t ArduinoHal::unixNow() { return DS3231RTC::getTime(); }
+#endif
