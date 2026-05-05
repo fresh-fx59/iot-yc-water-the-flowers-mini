@@ -188,8 +188,11 @@ inline void MetricsPusher::loop() {
 }
 
 inline String MetricsPusher::buildMetricsJson() {
-    // Single-zone payload. Shape matches tools/esp32_metrics_proxy.py
-    // expectations — proxy converts each key to a Prometheus gauge.
+    // Single-zone payload. Shape DIVERGES from the current mother-project
+    // tools/esp32_metrics_proxy.py (which expects uptime_s/wifi_rssi/pump/valves[]).
+    // TODO(phase11): update the proxy to consume these single-zone fields, OR
+    // deploy the mini behind a separate proxy instance. Until then the new fields
+    // will be silently dropped server-side and Grafana panels will read zeros.
     String json = "{";
 
     // ---- Device-wide ----

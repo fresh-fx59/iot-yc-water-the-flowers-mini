@@ -646,7 +646,7 @@ public:
         tm_buf.tm_hour = h;
         tm_buf.tm_min  = m;
         tm_buf.tm_sec  = sc;
-        out = mktime(&tm_buf);
+        out = timegm(&tm_buf);  // UTC: pairs with formatRtcTime()'s gmtime_r so /settime + /time round-trip cleanly.
         return out > 0;
     }
 
@@ -853,6 +853,10 @@ public:
     // ========================================================================
 
     static void processCommand(const String& raw) {
+        // Acknowledge any pending callback query first so inline-button taps don't
+        // show a permanent loading spinner. No-op if the trigger was a plain text msg.
+        answerCallbackQuery();
+
         String text = raw;
         text.trim();
         if (text.length() == 0) return;
