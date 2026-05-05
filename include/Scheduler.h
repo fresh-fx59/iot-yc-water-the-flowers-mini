@@ -29,8 +29,11 @@ inline time_t computeNextRun(time_t now_unix, time_t last_run_unix, int interval
 
 inline Decision shouldFireNow(time_t now_unix, time_t next_run_unix, unsigned long grace_ms) {
     if (now_unix < next_run_unix) return Decision::WAIT;
-    unsigned long delta_ms = (unsigned long)(now_unix - next_run_unix) * 1000UL;
-    if (delta_ms < grace_ms) return Decision::FIRE;
+    // Compare in seconds to avoid 32-bit unsigned-long overflow when delta is huge
+    // (e.g. RTC battery failed, system rebooted weeks/months later).
+    time_t delta_s = now_unix - next_run_unix;
+    unsigned long grace_s = grace_ms / 1000UL;
+    if ((unsigned long)delta_s < grace_s) return Decision::FIRE;
     return Decision::SKIP_RECOMPUTE;
 }
 

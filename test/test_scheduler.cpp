@@ -58,6 +58,13 @@ static void test_should_fire_now_skips_when_past_grace() {
                           (int)Scheduler::shouldFireNow(now, next, 12UL * 3600 * 1000));
 }
 
+static void test_should_fire_now_skips_at_grace_boundary() {
+    time_t next = at(2026, 5, 5, 7, 0);
+    time_t now  = next + 3600;  // exactly 1h late; grace is 1h
+    TEST_ASSERT_EQUAL_INT((int)Scheduler::Decision::SKIP_RECOMPUTE,
+                          (int)Scheduler::shouldFireNow(now, next, 3600UL * 1000UL));
+}
+
 void register_scheduler_tests() {
     RUN_TEST(test_first_run_picks_next_07_00_today_if_future);
     RUN_TEST(test_first_run_picks_07_00_tomorrow_if_past_today);
@@ -65,4 +72,5 @@ void register_scheduler_tests() {
     RUN_TEST(test_should_fire_now_waits_when_future);
     RUN_TEST(test_should_fire_now_fires_within_grace);
     RUN_TEST(test_should_fire_now_skips_when_past_grace);
+    RUN_TEST(test_should_fire_now_skips_at_grace_boundary);
 }
