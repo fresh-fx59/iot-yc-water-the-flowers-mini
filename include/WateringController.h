@@ -7,8 +7,19 @@
 #include "Settings.h"
 #ifdef NATIVE_TEST
 #include "TestConfig.h"
+// Native tests are single-threaded; the cross-core mutex is a no-op.
+struct PortMuxStub {};
+#define MINI_PORT_MUX_T          PortMuxStub
+#define MINI_PORT_MUX_INIT       {}
+#define MINI_PORT_ENTER(mux_ref) ((void)0)
+#define MINI_PORT_EXIT(mux_ref)  ((void)0)
 #else
 #include "config.h"
+#include <freertos/FreeRTOS.h>
+#define MINI_PORT_MUX_T          portMUX_TYPE
+#define MINI_PORT_MUX_INIT       portMUX_INITIALIZER_UNLOCKED
+#define MINI_PORT_ENTER(mux_ref) portENTER_CRITICAL(&(mux_ref))
+#define MINI_PORT_EXIT(mux_ref)  portEXIT_CRITICAL(&(mux_ref))
 #endif
 
 enum class WateringState { IDLE, WATERING };
@@ -54,7 +65,21 @@ public:
     void   setLastRunUnix(time_t t) { last_run_unix_ = t; }
     time_t nextRunUnix() const { return next_run_unix_; }
     void   setNextRunUnix(time_t t) { next_run_unix_ = t; }
-    void updateSettings(const Settings& s) { settings_ = s; }
+    // Settings is mutated from Core 0 (Telegram /set_*, /api/settings POST,
+    // /api/calibrate). Core 1 reads settings_ inside tick()/requestScheduled().
+    // Without the lock, Core 1 can observe a half-written struct (28 bytes,
+    // 7 separate stores). Critical section is ~50 cycles — negligible.
+    void updateSettings(const Settings& s) {
+        MINI_PORT_ENTER(settings_mux_);
+        settings_ = s;
+        MINI_PORT_EXIT(settings_mux_);
+    }
+    Settings settingsSnapshot() const {
+        MINI_PORT_ENTER(settings_mux_);
+        Settings copy = settings_;
+        MINI_PORT_EXIT(settings_mux_);
+        return copy;
+    }
 
     // Manual trigger (Telegram /water, web POST /api/water). Ignores pre-check.
     // NOTE: We still consume one soil sample so callers (and tests) can model
@@ -73,8 +98,9 @@ public:
         if (state_ == WateringState::WATERING) return WateringEvent::Rejected;
         if (overflow_latched_) return WateringEvent::Rejected;
         if (halted_) return WateringEvent::Rejected;
+        Settings cfg = settingsSnapshot();
         int raw = hal_.readSoilRaw();
-        if (Moisture::isWet(raw, settings_.soil_threshold)) {
+        if (Moisture::isWet(raw, cfg.soil_threshold)) {
             ++consecutive_skips_wet_;
             last_run_unix_ = hal_.unixNow();
             if (consecutive_skips_wet_ >= CONSECUTIVE_SKIPS_WET_ALERT_THRESHOLD) {
@@ -89,13 +115,14 @@ public:
     // Per-loop check while WATERING.
     WateringEvent tick() {
         if (state_ != WateringState::WATERING) return WateringEvent::None;
+        Settings cfg = settingsSnapshot();
         unsigned long now = hal_.millisNow();
-        unsigned long max_ms = (unsigned long)settings_.max_runtime_sec * 1000UL;
+        unsigned long max_ms = (unsigned long)cfg.max_runtime_sec * 1000UL;
         if ((now - motor_start_ms_) > max_ms) {
             return exitToIdleNoLastRunUpdate(WateringEvent::Timeout);
         }
         int raw = hal_.readSoilRaw();
-        if (Moisture::isWet(raw, settings_.soil_threshold)) {
+        if (Moisture::isWet(raw, cfg.soil_threshold)) {
             consecutive_skips_wet_ = 0;
             last_run_unix_ = hal_.unixNow();
             return exitToIdle(WateringEvent::CompletedWet);
@@ -115,8 +142,9 @@ public:
     // Independent of SM. Caller invokes every Core 1 loop.
     WateringEvent watchdogCheck() {
         if (state_ != WateringState::WATERING) return WateringEvent::None;
+        Settings cfg = settingsSnapshot();
         unsigned long now = hal_.millisNow();
-        unsigned long limit = (unsigned long)settings_.max_runtime_sec * 1000UL
+        unsigned long limit = (unsigned long)cfg.max_runtime_sec * 1000UL
                               + GLOBAL_WATCHDOG_MARGIN_MS;
         if ((now - motor_start_ms_) > limit) {
             hal_.motorOff();
@@ -154,6 +182,7 @@ private:
 
     WateringHal&  hal_;
     Settings      settings_;
+    mutable MINI_PORT_MUX_T settings_mux_ = MINI_PORT_MUX_INIT;
     WateringState state_ = WateringState::IDLE;
     bool          overflow_latched_ = false;
     bool          halted_ = false;

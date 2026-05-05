@@ -21,24 +21,15 @@
 
 // ---------------------------------------------------------------------------
 // Portable timegm() shim — ESP-IDF newlib doesn't ship the GNU/BSD extension,
-// but Scheduler.h and TelegramNotifier.h both call it (works on glibc/macOS
-// in the native test env, fails to link on ESP32). We provide a name-visible
-// definition BEFORE those headers are included so the inline call sites
-// resolve here. Implementation: shift mktime() by the timezone offset, since
-// mktime() interprets `tm` as local time and we need UTC.
+// but Scheduler.h and TelegramNotifier.h both call it. We pin the process TZ
+// to UTC0 once in setup() (see setupTimezone() below); after that mktime()
+// interprets struct tm as UTC and is identical to timegm(). This shim is
+// thread-safe because it never mutates TZ — only setupTimezone() does, and
+// only before any other task runs.
 // ---------------------------------------------------------------------------
 #ifndef NATIVE_TEST
 extern "C" inline time_t timegm(struct tm* tm_buf) {
-    // Save TZ, set to UTC, compute, restore. Avoids platform-specific timezone
-    // arithmetic and is correct regardless of DST rules.
-    char* tz_save = getenv("TZ");
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    time_t result = mktime(tm_buf);
-    if (tz_save) setenv("TZ", tz_save, 1);
-    else         unsetenv("TZ");
-    tzset();
-    return result;
+    return mktime(tm_buf);  // requires TZ=UTC0 — pinned in setup()
 }
 #endif
 
@@ -277,6 +268,12 @@ void setup() {
     delay(200);
     Serial.println();
     Serial.println("[mini] v" FIRMWARE_VERSION " boot");
+
+    // Pin process TZ to UTC0 once, before any other task runs. After this,
+    // mktime() == timegm() and the timegm() shim above is a thread-safe noop
+    // wrapper. All scheduling math is UTC-only by design (Phase 3 spec).
+    setenv("TZ", "UTC0", 1);
+    tzset();
 
     // Motor relay FIRST — guarantees the relay is OFF the moment the chip
     // wakes, before any other code path can flip it. Otherwise a partially-
