@@ -4,7 +4,9 @@
 #include <WiFi.h>
 #include "config.h"
 #include "DebugHelper.h"
-#include "WateringSystem.h"
+
+// Forward declaration — single-zone controller lands in Phase 6.
+class WateringController;
 
 // ============================================
 // Network Manager Class
@@ -12,7 +14,7 @@
 // ============================================
 class NetworkManager {
 private:
-    static WateringSystem* wateringSystem;
+    static WateringController* wateringController;
 
     // WiFi outage tracking (v1.17.3)
     static unsigned long wifiDisconnectedSince;    // 0 = connected, >0 = millis() when disconnect detected
@@ -22,8 +24,8 @@ private:
 
 public:
     // ========== Initialization ==========
-    static void setWateringSystem(WateringSystem* ws) {
-        wateringSystem = ws;
+    static void setWateringController(WateringController* wc) {
+        wateringController = wc;
     }
 
     static void init() {
@@ -132,7 +134,7 @@ public:
 };
 
 // Static member initialization
-WateringSystem* NetworkManager::wateringSystem = nullptr;
+WateringController* NetworkManager::wateringController = nullptr;
 unsigned long NetworkManager::wifiDisconnectedSince = 0;
 bool NetworkManager::wifiLongOutageNotified = false;
 unsigned long NetworkManager::lastWifiReconnectAttempt = 0;

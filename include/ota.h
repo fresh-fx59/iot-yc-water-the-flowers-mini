@@ -18,11 +18,11 @@ const char* update_password = OTA_PASSWORD;
 
 WebServer httpServer(80);
 
-// Forward declaration
-class WateringSystem;
+// Forward declaration — single-zone controller lands in Phase 6.
+class WateringController;
 
 // Global pointer - will be set by main.cpp
-WateringSystem* g_wateringSystem_ptr = nullptr;
+WateringController* g_wateringController_ptr = nullptr;
 
 // Forward declarations of functions
 void setupOta();
@@ -82,21 +82,21 @@ void serveFile(const String& path, const String& contentType) {
   file.close();
 }
 
-void setWateringSystemRef(WateringSystem* ws) {
-  if (ws == nullptr) {
-    Serial.println("ERROR: setWateringSystemRef called with nullptr!");
+void setWateringControllerRef(WateringController* wc) {
+  if (wc == nullptr) {
+    Serial.println("ERROR: setWateringControllerRef called with nullptr!");
     return;
   }
-  g_wateringSystem_ptr = ws;
-  Serial.println("✓ WateringSystem reference set for web server");
-  Serial.printf("  Setting: g_wateringSystem_ptr = 0x%p\n", (void*)g_wateringSystem_ptr);
-  Serial.printf("  Verify: g_wateringSystem_ptr = 0x%p\n", (void*)g_wateringSystem_ptr);
+  g_wateringController_ptr = wc;
+  Serial.println("WateringController reference set for web server");
+  Serial.printf("  Setting: g_wateringController_ptr = 0x%p\n", (void*)g_wateringController_ptr);
+  Serial.printf("  Verify: g_wateringController_ptr = 0x%p\n", (void*)g_wateringController_ptr);
 }
 
 // Getter to verify the pointer
-WateringSystem* getWateringSystemRef() {
-  Serial.printf("getWateringSystemRef returning: 0x%p\n", (void*)g_wateringSystem_ptr);
-  return g_wateringSystem_ptr;
+WateringController* getWateringControllerRef() {
+  Serial.printf("getWateringControllerRef returning: 0x%p\n", (void*)g_wateringController_ptr);
+  return g_wateringController_ptr;
 }
 
 void setupOta() {

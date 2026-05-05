@@ -10,10 +10,15 @@
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
 
-// ============================================ 
+// Forward declaration — single-zone controller lands in Phase 6.
+class WateringController;
+
+// ============================================
 // Telegram Notifier Class
 // Sends watering notifications via Telegram Bot API
-// ============================================ 
+// Phase 1: stripped of all mother-project formatters/handlers (valves, lamp,
+// learning). Phase 7 retargets command set + formatters for the mini.
+// ============================================
 class TelegramNotifier {
 private:
     static bool &botCommandsConfigured() {
@@ -111,25 +116,10 @@ private:
         return usingProxy ? TELEGRAM_PROXY_HTTP_TIMEOUT_MS : TELEGRAM_HTTP_TIMEOUT_MS;
     }
 
+    // TODO Phase 7: build a single-zone command list (water now / status / halt /
+    // resume / time / settime / overflow_status / reset_overflow / reinit_gpio).
     static String getBotCommandsJson() {
-        return String("[") +
-               "{\"command\":\"menu\",\"description\":\"Quick-access button panel\"}," +
-               "{\"command\":\"help\",\"description\":\"Show command reference\"}," +
-               "{\"command\":\"water\",\"description\":\"Water tray N (e.g. /water 2)\"}," +
-               "{\"command\":\"start_all\",\"description\":\"Water all trays sequentially\"}," +
-               "{\"command\":\"halt\",\"description\":\"Block watering for firmware updates\"}," +
-               "{\"command\":\"resume\",\"description\":\"Resume normal operation\"}," +
-               "{\"command\":\"time\",\"description\":\"Show RTC time and battery\"}," +
-               "{\"command\":\"settime\",\"description\":\"Sync or set device time\"}," +
-               "{\"command\":\"test_sensors\",\"description\":\"Test all rain sensors\"}," +
-               "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow lock\"}," +
-               "{\"command\":\"reinit_gpio\",\"description\":\"Reinitialize relay GPIOs\"}," +
-               "{\"command\":\"overflow_status\",\"description\":\"Show overflow sensor readings\"}," +
-               "{\"command\":\"lamp_status\",\"description\":\"Show plant light status\"}," +
-               "{\"command\":\"lamp_on\",\"description\":\"Turn plant light on manually\"}," +
-               "{\"command\":\"lamp_off\",\"description\":\"Turn plant light off manually\"}," +
-               "{\"command\":\"lamp_auto\",\"description\":\"Return plant light to schedule\"}" +
-               "]";
+        return String("[]");
     }
 
     static void logTransportLocalOnly(const String& message) {
@@ -165,7 +155,7 @@ private:
 
     static bool sendMessage(const String& message, const String& replyMarkup = "") {
         if (!WiFi.isConnected()) {
-            logTransportLocalOnly("❌ Cannot send Telegram: WiFi not connected");
+            logTransportLocalOnly("Cannot send Telegram: WiFi not connected");
             return false;
         }
         if (isInCooldown()) {
@@ -182,7 +172,7 @@ private:
             String url = monitoringProxyBaseUrl() + "/v1/telegram/sendMessage";
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onTelegramFailure();
-                logTransportLocalOnly("❌ Telegram proxy send begin failed");
+                logTransportLocalOnly("Telegram proxy send begin failed");
                 return false;
             }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -207,7 +197,7 @@ private:
 
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onTelegramFailure();
-                logTransportLocalOnly("❌ Telegram send begin failed");
+                logTransportLocalOnly("Telegram send begin failed");
                 return false;
             }
             http.setTimeout(httpTimeoutMs(usingProxy));
@@ -218,11 +208,11 @@ private:
 
         if (success) {
             onTelegramSuccess();
-            logTransportLocalOnly("✓ Telegram message sent");
+            logTransportLocalOnly("Telegram message sent");
             if (g_metricsLog) g_metricsLog("debug", "Telegram sent OK");
         } else {
             onTelegramFailure();
-            logTransportLocalOnly("❌ Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            logTransportLocalOnly("Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
             if (g_metricsLog) g_metricsLog("warn", "Telegram failed HTTP " + String(httpCode));
             g_telegramFailures++;
             if (httpCode > 0) {
@@ -249,17 +239,17 @@ public:
     // Send device online notification
     static void sendDeviceOnline(const String& version, const String& deviceType) {
         if (!WiFi.isConnected()) {
-            logTransportLocalOnly("❌ Cannot send Telegram: WiFi not connected");
+            logTransportLocalOnly("Cannot send Telegram: WiFi not connected");
             return;
         }
 
-        String message = "🟢 <b>Device Online</b>\n";
-        message += "⏰ " + getCurrentDateTime() + "\n";
-        message += "📍 IP: " + WiFi.localIP().toString() + "\n";
-        message += "📶 WiFi: " + String(WiFi.RSSI()) + " dBm\n";
-        message += "🔧 Version: " + version;
+        String message = "<b>Device Online</b>\n";
+        message += getCurrentDateTime() + "\n";
+        message += "IP: " + WiFi.localIP().toString() + "\n";
+        message += "WiFi: " + String(WiFi.RSSI()) + " dBm\n";
+        message += "Version: " + version;
 
-        DebugHelper::debug("\n📱 Sending Telegram online notification...");
+        DebugHelper::debug("Sending Telegram online notification...");
         sendMessage(message);
     }
 
@@ -291,7 +281,7 @@ public:
             String url = monitoringProxyBaseUrl() + "/v1/telegram/sendMessage";
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onNotifFailure();
-                logTransportLocalOnly("❌ Telegram notification send begin failed (proxy)");
+                logTransportLocalOnly("Telegram notification send begin failed (proxy)");
                 return false;
             }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -310,7 +300,7 @@ public:
 
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onNotifFailure();
-                logTransportLocalOnly("❌ Telegram notification send begin failed");
+                logTransportLocalOnly("Telegram notification send begin failed");
                 return false;
             }
             http.setTimeout(httpTimeoutMs(usingProxy));
@@ -321,10 +311,10 @@ public:
 
         if (success) {
             onNotifSuccess();
-            logTransportLocalOnly("✓ Telegram notification sent");
+            logTransportLocalOnly("Telegram notification sent");
         } else {
             onNotifFailure();
-            logTransportLocalOnly("❌ Telegram notification send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            logTransportLocalOnly("Telegram notification send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
             if (httpCode > 0) {
                 logTransportLocalOnly("Response: " + http.getString());
             }
@@ -334,40 +324,14 @@ public:
         return success;
     }
 
+    // TODO Phase 7: real /help text for the single-zone bot.
     static String getHelpMessage() {
-        String message = "📘 <b>AVAILABLE COMMANDS</b>\n\n";
-        message += "<b>Watering</b>\n";
-        message += "/water N - Water tray N (1-6)\n";
-        message += "/start_all - Water all trays sequentially\n";
-        message += "/halt - Block watering (OTA/web stay active)\n";
-        message += "/resume - Exit halt mode\n\n";
-        message += "<b>Diagnostics</b>\n";
-        message += "/time - RTC time, battery, lamp status\n";
-        message += "/settime - Sync from NTP\n";
-        message += "/test_sensors - Test all rain sensors\n";
-        message += "/overflow_status - Overflow sensor readings\n\n";
-        message += "<b>Safety</b>\n";
-        message += "/reset_overflow - Clear overflow lock\n";
-        message += "/reinit_gpio - Reinitialize relay GPIOs\n\n";
-        message += "<b>Plant Light</b>\n";
-        message += "/lamp_status - Show light status\n";
-        message += "/lamp_on /lamp_off /lamp_auto\n\n";
-        message += "💡 Use /menu for quick-access buttons";
-
-        return message;
+        return String("Mini watering bot — help text lands in Phase 7.");
     }
 
+    // TODO Phase 7: inline keyboard for /menu (water now / halt / resume / status).
     static String getMainMenuKeyboard() {
-        String kb = "{\"inline_keyboard\":[";
-        kb += "[{\"text\":\"💧 1\",\"callback_data\":\"water_1\"},{\"text\":\"💧 2\",\"callback_data\":\"water_2\"},{\"text\":\"💧 3\",\"callback_data\":\"water_3\"}],";
-        kb += "[{\"text\":\"💧 4\",\"callback_data\":\"water_4\"},{\"text\":\"💧 5\",\"callback_data\":\"water_5\"},{\"text\":\"💧 6\",\"callback_data\":\"water_6\"}],";
-        kb += "[{\"text\":\"🚿 Water All\",\"callback_data\":\"start_all\"}],";
-        kb += "[{\"text\":\"⏸ Halt\",\"callback_data\":\"halt\"},{\"text\":\"▶️ Resume\",\"callback_data\":\"resume\"}],";
-        kb += "[{\"text\":\"🕐 Time\",\"callback_data\":\"time\"},{\"text\":\"🔍 Sensors\",\"callback_data\":\"test_sensors\"}],";
-        kb += "[{\"text\":\"🌊 Overflow\",\"callback_data\":\"overflow_status\"},{\"text\":\"🔄 Reset\",\"callback_data\":\"reset_overflow\"}],";
-        kb += "[{\"text\":\"💡 On\",\"callback_data\":\"lamp_on\"},{\"text\":\"🔌 Off\",\"callback_data\":\"lamp_off\"},{\"text\":\"🔄 Auto\",\"callback_data\":\"lamp_auto\"}]";
-        kb += "]}";
-        return kb;
+        return String("{\"inline_keyboard\":[]}");
     }
 
     static void answerCallbackQuery() {
@@ -425,7 +389,7 @@ public:
         if (usingProxy) {
             String url = monitoringProxyBaseUrl() + "/v1/telegram/setMyCommands";
             if (!beginHttpClient(http, url, client, plainClient)) {
-                logTransportLocalOnly("❌ Telegram setMyCommands begin failed (proxy)");
+                logTransportLocalOnly("Telegram setMyCommands begin failed (proxy)");
                 return;
             }
 
@@ -439,7 +403,7 @@ public:
             String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
                          "/setMyCommands";
             if (!beginHttpClient(http, url, client, plainClient)) {
-                logTransportLocalOnly("❌ Telegram setMyCommands begin failed");
+                logTransportLocalOnly("Telegram setMyCommands begin failed");
                 return;
             }
 
@@ -451,9 +415,9 @@ public:
 
         if (httpCode == 200) {
             botCommandsConfigured() = true;
-            logTransportLocalOnly("✓ Telegram bot commands configured");
+            logTransportLocalOnly("Telegram bot commands configured");
         } else {
-            logTransportLocalOnly("❌ Telegram setMyCommands failed (" +
+            logTransportLocalOnly("Telegram setMyCommands failed (" +
                                   String(usingProxy ? "proxy" : "direct") +
                                   "), HTTP code: " + String(httpCode));
             if (httpCode > 0) {
@@ -464,100 +428,14 @@ public:
         http.end();
     }
 
-    // Format watering start notification (no network call)
-    static String formatWateringStarted(const String& triggerType, const String& trayNumbers) {
-        String timestamp = "Session " + getCurrentDateTime();
+    // TODO Phase 7: format a "watering started" notification for the single zone
+    // (trigger + planned duration). Mother's multi-tray formatter intentionally
+    // dropped — see git history of include/TelegramNotifier.h for reference.
 
-        String message = "🚿 <b>Watering Started</b>\n";
-        message += "⏰ " + timestamp + "\n";
-        message += "🔧 Trigger: " + triggerType + "\n";
-        message += "🌱 Trays: " + trayNumbers;
+    // TODO Phase 7: format a "watering complete" notification for the single zone
+    // (actual duration + final soil reading + skipped/wet flag if applicable).
 
-        return message;
-    }
-
-    // Send watering start notification
-    static void sendWateringStarted(const String& triggerType, const String& trayNumbers) {
-        DebugHelper::debug("\n📱 Sending Telegram start notification...");
-        sendMessage(formatWateringStarted(triggerType, trayNumbers));
-    }
-
-    // Format watering completion notification (no network call)
-    static String formatWateringComplete(const String results[][3], int numTrays) {
-        String message = "✅ <b>Watering Complete</b>\n\n";
-        message += "<pre>";
-        message += "tray | duration(sec) | status\n";
-        message += "-----|---------------|-------\n";
-
-        for (int i = 0; i < numTrays; i++) {
-            String tray = results[i][0];
-            String duration = results[i][1];
-            String status = results[i][2];
-
-            // Column 1: tray (4 chars, right-aligned)
-            while (tray.length() < 4) tray = " " + tray;
-            message += tray + " | ";
-
-            // Column 2: duration (13 chars, right-aligned)
-            while (duration.length() < 13) duration = " " + duration;
-            message += duration + " | ";
-
-            // Column 3: status
-            message += status + "\n";
-        }
-
-        message += "</pre>";
-
-        return message;
-    }
-
-    // Send watering completion notification with results table
-    static void sendWateringComplete(const String results[][3], int numTrays) {
-        DebugHelper::debug("\n📱 Sending Telegram completion notification...");
-        sendMessage(formatWateringComplete(results, numTrays));
-    }
-
-    // Format watering schedule notification (no network call)
-    // scheduleData[i][0] = tray number, [1] = planned time, [2] = duration, [3] = cycle (hours)
-    static String formatWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
-        String message = "📅 <b>" + title + "</b>\n";
-        message += "⏰ " + getCurrentDateTime() + "\n\n";
-        message += "<pre>";
-        message += " tr | planned     | dur  | cycle\n";
-        message += "----|-------------|------|------\n";
-
-        for (int i = 0; i < numTrays; i++) {
-            String tray = scheduleData[i][0];
-            String planned = scheduleData[i][1];
-            String duration = scheduleData[i][2];
-            String cycle = scheduleData[i][3];
-
-            // Column 1: tray (3 chars, right-aligned)
-            while (tray.length() < 3) tray = " " + tray;
-            message += tray + " | ";
-
-            // Column 2: planned time (11 chars, left-aligned)
-            while (planned.length() < 11) planned = planned + " ";
-            message += planned + " | ";
-
-            // Column 3: duration (4 chars, right-aligned)
-            while (duration.length() < 4) duration = " " + duration;
-            message += duration + " | ";
-
-            // Column 4: cycle
-            message += cycle + "\n";
-        }
-
-        message += "</pre>";
-
-        return message;
-    }
-
-    // Send watering schedule notification showing planned watering times
-    static void sendWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
-        DebugHelper::debug("\n📱 Sending Telegram schedule notification...");
-        sendMessage(formatWateringSchedule(scheduleData, numTrays, title));
-    }
+    // TODO Phase 7: format a "next planned watering" notification (date + time).
 
     // Check for Telegram commands using long polling.
     // Returns the command string or an empty string if no new command is found.
@@ -593,7 +471,7 @@ public:
 
         if (!beginHttpClient(http, url, client, plainClient)) {
             onTelegramFailure();
-            logTransportLocalOnly("❌ Telegram getUpdates begin failed (" + String(usingProxy ? "proxy" : "direct") + ")");
+            logTransportLocalOnly("Telegram getUpdates begin failed (" + String(usingProxy ? "proxy" : "direct") + ")");
             return "";
         }
         if (usingProxy) {
@@ -662,7 +540,7 @@ public:
             }
         } else {
             onTelegramFailure();
-            logTransportLocalOnly("❌ Telegram getUpdates failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            logTransportLocalOnly("Telegram getUpdates failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
         }
 
         http.end();
@@ -670,9 +548,9 @@ public:
     }
 };
 
-// ============================================ 
+// ============================================
 // Global Function for DebugHelper
-// ============================================ 
+// ============================================
 inline bool sendTelegramDebug(const String& message) {
     return TelegramNotifier::sendDebugMessage(message);
 }

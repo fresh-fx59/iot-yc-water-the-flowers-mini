@@ -7,11 +7,9 @@
 #include <WiFiClientSecure.h>
 #include <time.h>
 #include "config.h"
-#include "ValveController.h"
 
-// Forward declaration - WateringSystem is included after class definition
-class WateringSystem;
-extern WateringSystem* g_wateringSystem_ptr;
+// Forward declaration — single-zone controller lands in Phase 6.
+class WateringController;
 
 // ============================================
 // Metrics Log Entry
@@ -27,6 +25,9 @@ struct MetricsLogEntry {
 // ============================================
 // MetricsPusher - Prometheus/Loki push gateway
 // Header-only static class (same pattern as DebugHelper)
+//
+// Phase 1: stripped of mother-project per-valve / learning emission. Phase 7
+// rebuilds buildMetricsJson() to emit single-zone gauges.
 // ============================================
 class MetricsPusher {
 private:
@@ -89,7 +90,6 @@ private:
         logCount++;
     }
 
-    static bool isAnyValveActive();
     static String buildMetricsJson();
     static String buildLogsJson();
     static bool pushMetrics(const String& json);
@@ -101,7 +101,9 @@ public:
         addLogEntry(level, msg);
     }
 
-    static void init() {
+    // Phase 1: signature uses void* placeholder so the file compiles without
+    // the dropped WateringSystem type. Phase 7 will swap to WateringController*.
+    static void init(void* /*controller*/ = nullptr) {
         logHead = 0;
         logTail = 0;
         logCount = 0;
@@ -140,28 +142,16 @@ int MetricsPusher::logPushAttempts = 0;
 int MetricsPusher::logPushSuccesses = 0;
 
 // ============================================
-// Include WateringSystem AFTER static member init to avoid circular deps
+// Implementation
 // ============================================
-#include "WateringSystem.h"
-
-// ============================================
-// Implementation (needs WateringSystem)
-// ============================================
-
-inline bool MetricsPusher::isAnyValveActive() {
-    if (!g_wateringSystem_ptr) return false;
-    for (int i = 0; i < NUM_VALVES; i++) {
-        ValveController* v = g_wateringSystem_ptr->getValve(i);
-        if (v && v->phase != PHASE_IDLE) return true;
-    }
-    return false;
-}
 
 inline void MetricsPusher::loop() {
     if (!useProxy() || !WiFi.isConnected()) return;
 
     unsigned long now = millis();
-    unsigned long interval = isAnyValveActive() ? METRICS_PUSH_INTERVAL_ACTIVE_MS : METRICS_PUSH_INTERVAL_IDLE_MS;
+    // Phase 1: no controller hookup yet, so always treat as idle.
+    // Phase 7 will check WateringController state to use the active interval.
+    unsigned long interval = METRICS_PUSH_INTERVAL_IDLE_MS;
 
     if (lastPushTime != 0 && (now - lastPushTime) < interval) return;
     lastPushTime = now;
@@ -186,111 +176,12 @@ inline void MetricsPusher::loop() {
 inline String MetricsPusher::buildMetricsJson() {
     String json = "{";
 
-    // Uptime
-    json += "\"uptime_s\":" + String(millis() / 1000);
-
-    // Free heap
-    json += ",\"free_heap\":" + String(ESP.getFreeHeap());
-
-    // WiFi RSSI
-    json += ",\"wifi_rssi\":" + String(WiFi.RSSI());
-
-    if (g_wateringSystem_ptr) {
-        // Pump
-        json += ",\"pump\":" + String(g_wateringSystem_ptr->getPumpState() == PUMP_ON ? 1 : 0);
-
-        // Overflow
-        json += ",\"overflow\":" + String(g_wateringSystem_ptr->isOverflowDetected() ? 1 : 0);
-        json += ",\"overflow_streak\":" + String(g_wateringSystem_ptr->getOverflowDetectionStreak());
-
-        // Water tank
-        json += ",\"water_tank_ok\":" + String(g_wateringSystem_ptr->isWaterLevelLow() ? 0 : 1);
-
-        // Plant light
-        json += ",\"plant_light\":" + String(g_wateringSystem_ptr->isPlantLightOn() ? 1 : 0);
-
-        // Telegram failures
-        json += ",\"telegram_failures\":" + String(g_telegramFailures);
-
-        // Valves
-        unsigned long currentTime = millis();
-        json += ",\"valves\":[";
-        for (int i = 0; i < NUM_VALVES; i++) {
-            ValveController* v = g_wateringSystem_ptr->getValve(i);
-            if (!v) continue;
-
-            if (i > 0) json += ",";
-            json += "{";
-            json += "\"id\":" + String(i);
-            json += ",\"state\":" + String(v->state == VALVE_OPEN ? 1 : 0);
-            json += ",\"phase\":" + String((int)v->phase);
-            json += ",\"rain\":" + String(v->rainDetected ? 1 : 0);
-
-            // Watering duration in seconds
-            unsigned long wateringSec = 0;
-            if (v->phase == PHASE_WATERING && v->wateringStartTime > 0) {
-                wateringSec = (currentTime - v->wateringStartTime) / 1000;
-            }
-            json += ",\"watering_s\":" + String(wateringSec);
-
-            // Water level percentage
-            float waterLevel = calculateCurrentWaterLevel(v, currentTime);
-            json += ",\"water_level_pct\":" + String((int)waterLevel);
-
-            // Learning data
-            json += ",\"calibrated\":" + String(v->isCalibrated ? 1 : 0);
-            json += ",\"auto_watering\":" + String(v->autoWateringEnabled ? 1 : 0);
-            json += ",\"interval_mult\":" + String(v->intervalMultiplier, 2);
-            json += ",\"total_cycles\":" + String(v->totalWateringCycles);
-
-            // Time since last watering
-            unsigned long timeSince = 0;
-            if (hasLastWateringReference(v)) {
-                timeSince = getTimeSinceLastWatering(v, currentTime);
-            }
-            json += ",\"time_since_ms\":" + String(timeSince);
-
-            // Time until empty
-            unsigned long timeUntilEmpty = 0;
-            if (v->isCalibrated && v->emptyToFullDuration > 0 && hasLastWateringReference(v)) {
-                unsigned long ts = getTimeSinceLastWatering(v, currentTime);
-                if (ts < v->emptyToFullDuration) {
-                    timeUntilEmpty = v->emptyToFullDuration - ts;
-                }
-            }
-            json += ",\"time_until_empty_ms\":" + String(timeUntilEmpty);
-
-            // Time since last watering attempt (for 24h safety interval tracking)
-            unsigned long timeSinceAttempt = 0;
-            if (hasLastWateringAttemptReference(v)) {
-                timeSinceAttempt = getTimeSinceLastWateringAttempt(v, currentTime);
-            }
-            json += ",\"time_since_attempt_ms\":" + String(timeSinceAttempt);
-
-            // Time until next watering (mirrors shouldWaterNow logic)
-            // max(emptyToFullDuration - timeSince, 24h_min - timeSinceAttempt, 0)
-            unsigned long timeUntilNext = 0;
-            if (v->autoWateringEnabled && (v->isCalibrated || v->emptyToFullDuration > 0)) {
-                unsigned long consumptionRemaining = 0;
-                if (v->emptyToFullDuration > 0 && hasLastWateringReference(v) && timeSince < v->emptyToFullDuration) {
-                    consumptionRemaining = v->emptyToFullDuration - timeSince;
-                }
-                unsigned long safetyRemaining = 0;
-                if (hasLastWateringAttemptReference(v) && timeSinceAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
-                    safetyRemaining = AUTO_WATERING_MIN_INTERVAL_MS - timeSinceAttempt;
-                }
-                timeUntilNext = consumptionRemaining > safetyRemaining ? consumptionRemaining : safetyRemaining;
-            }
-            json += ",\"time_until_next_ms\":" + String(timeUntilNext);
-
-            json += ",\"baseline_fill_ms\":" + String(v->baselineFillDuration);
-            json += ",\"last_fill_ms\":" + String(v->lastFillDuration);
-            json += ",\"empty_duration_ms\":" + String(v->emptyToFullDuration);
-
-            json += "}";
-        }
-        json += "]";
-    }
+    // Phase 1: emit only device-wide gauges. Phase 7 adds single-zone metrics:
+    //   pump, soil_raw, soil_calibrated, overflow, motor_runtime_s, last_water_ts,
+    //   next_water_ts, skip_count_consecutive_wet, halt, settings_version.
+    json += "\"device\":\"watering-system-mini\"";
+    json += ",\"uptime_ms\":" + String(millis());
+    json += ",\"rssi\":" + String(WiFi.RSSI());
 
     // Log push diagnostics (visible in Prometheus for debugging)
     json += ",\"log_buffer_count\":" + String(logCount);
@@ -359,7 +250,7 @@ inline String MetricsPusher::buildLogsJson() {
         if (groups[g].count == 0) continue;
         if (!first) json += ",";
         first = false;
-        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"watering-system\",\"level\":\"" + groups[g].level + "\"},";
+        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"watering-system-mini\",\"level\":\"" + groups[g].level + "\"},";
         json += "\"values\":[" + groups[g].values + "]}";
     }
     json += "]}";
