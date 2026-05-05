@@ -1,0 +1,277 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+#include <secret.h>
+
+// ============================================
+// Device Configuration
+// ============================================
+const char *VERSION = "watering_system_1.25.0";
+const char *DEVICE_TYPE = "smart_watering_system_time_based";
+
+// ============================================
+// Hardware Pin Definitions (ESP32-S3-N8R2)
+// ============================================
+#define LED_PIN 48  // Built-in RGB NeoPixel LED
+#define PUMP_PIN 4
+#define RAIN_SENSOR_POWER_PIN 18
+
+// Valve pins
+#define VALVE1_PIN 5
+#define VALVE2_PIN 6
+#define VALVE3_PIN 7
+#define VALVE4_PIN 15
+#define VALVE5_PIN 16
+#define VALVE6_PIN 17
+
+// Rain sensor pins
+#define RAIN_SENSOR1_PIN 8
+#define RAIN_SENSOR2_PIN 9
+#define RAIN_SENSOR3_PIN 10
+#define RAIN_SENSOR4_PIN 11
+#define RAIN_SENSOR5_PIN 12
+#define RAIN_SENSOR6_PIN 13
+
+// DS3231 RTC I2C pins
+#define I2C_SDA_PIN 14
+#define I2C_SCL_PIN 3
+#define DS3231_I2C_ADDRESS 0x68
+
+// DS3231 Battery Measurement pins
+#define BATTERY_ADC_PIN 1        // ADC pin (reads voltage divider)
+#define BATTERY_CONTROL_PIN 2    // Controls transistor (HIGH = measure, LOW = off)
+
+// Master Overflow Sensor pin (2N2222 transistor circuit)
+#define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
+
+// Water Level Sensor pin (float switch in water tank)
+#define WATER_LEVEL_SENSOR_PIN 19  // HIGH = water detected, LOW = no water/empty
+
+// Plant light relay pin
+// Change this if you wire the lamp relay to a different free ESP32 GPIO.
+#define PLANT_LIGHT_RELAY_PIN 41
+const bool PLANT_LIGHT_ACTIVE_HIGH = false;
+
+// ============================================
+// System Constants
+// ============================================
+// RTC timezone: DS3231 stores Moscow local time (UTC+3).
+// System time runs on local time; this offset converts to UTC for Loki/Prometheus.
+const long RTC_TIMEZONE_OFFSET_SEC = 3 * 3600;  // UTC+3
+
+const int NUM_VALVES = 6;
+const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN,
+                                    VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
+const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN,
+                                          RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN,
+                                          RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
+
+// ============================================
+// Timing Constants
+// ============================================
+const unsigned long RAIN_CHECK_INTERVAL = 100; // Check rain sensor every 100ms
+const unsigned long VALVE_STABILIZATION_DELAY =
+    500; // Wait 500ms for valve to open
+const unsigned long STATE_PUBLISH_INTERVAL =
+    2000;                                      // Publish state every 2 seconds
+const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - REDUCED FOR SAFETY
+const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
+
+// Per-valve timeout configuration (v1.16.0)
+// Valve 0 (Tray 1) has longer timeout due to slower flow rate
+constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
+    33000,  // Valve 0: 33s
+    31000,  // Valve 1: 31s
+    27000,  // Valve 2: 27s
+    25000,  // Valve 3: 25s (standard)
+    25000,  // Valve 4: 25s (standard)
+    25000   // Valve 5: 25s (standard)
+};
+
+// Emergency timeouts: 5 seconds higher than normal (safety margin)
+constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
+    38000,  // Valve 0: 38s (5s margin)
+    36000,  // Valve 1: 36s (5s margin)
+    32000,  // Valve 2: 32s (5s margin)
+    30000,  // Valve 3: 30s (5s margin)
+    30000,  // Valve 4: 30s (5s margin)
+    30000   // Valve 5: 30s (5s margin)
+};
+
+// Universal inter-valve gap — pause between finishing one valve and starting
+// the next queued valve. Gives the pump pressure and sensors time to settle so
+// every cycle sees the same flow rate (required for stable learning baselines).
+const unsigned long INTER_VALVE_GAP_MS = 30000;  // 30 seconds
+
+// Helper functions for safe timeout access
+inline unsigned long getValveNormalTimeout(int valveIndex) {
+    if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+        return MAX_WATERING_TIME;  // Fallback to global default
+    }
+    return VALVE_NORMAL_TIMEOUTS[valveIndex];
+}
+
+inline unsigned long getValveEmergencyTimeout(int valveIndex) {
+    if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+        return ABSOLUTE_SAFETY_TIMEOUT;  // Fallback to global default
+    }
+    return VALVE_EMERGENCY_TIMEOUTS[valveIndex];
+}
+
+const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
+const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
+const unsigned long WATER_LEVEL_LOW_DELAY = 11000; // Wait 11 seconds after detecting low water before blocking (allows watering to continue finishing cycle)
+const unsigned long PLANT_LIGHT_SCHEDULE_CHECK_INTERVAL_MS = 1000; // Check lamp schedule every second
+
+// Plant light schedule (local RTC/system time)
+const int PLANT_LIGHT_SCHEDULE_ON_HOUR = 22;
+const int PLANT_LIGHT_SCHEDULE_ON_MINUTE = 0;
+const int PLANT_LIGHT_SCHEDULE_OFF_HOUR = 7;
+const int PLANT_LIGHT_SCHEDULE_OFF_MINUTE = 0;
+
+// ============================================
+// Overflow Sensor Debouncing Constants
+// ============================================
+// Software debouncing to prevent false triggers from electrical noise
+const int OVERFLOW_DEBOUNCE_SAMPLES = 7;        // Number of readings to take
+const int OVERFLOW_DEBOUNCE_THRESHOLD = 5;      // Minimum LOW readings to declare overflow (5 out of 7)
+const unsigned long OVERFLOW_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5ms)
+const int OVERFLOW_CONFIRMATION_CHECKS = 3;     // Require 3 consecutive debounced detections (~300ms sustained LOW)
+
+// ============================================
+// Learning Algorithm Constants
+// ============================================
+const float LEARNING_EMPTY_THRESHOLD =
+    0.95; // If fill_ratio >= 0.95, consider tray empty
+const float LEARNING_FULL_THRESHOLD =
+    0.10; // If fill_ratio < 0.10, tray was almost full
+const int LEARNING_MAX_SKIP_CYCLES = 15; // Maximum cycles to skip
+const int LEARNING_FULL_SKIP_CYCLES =
+    10; // Skip cycles when tray is almost full
+const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
+    86400000; // 24 hours minimum between auto-watering attempts
+const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
+    86400000; // 24 hours retry for uncalibrated trays found full
+const unsigned long RECENT_WATERING_THRESHOLD_MS =
+    7200000; // 2 hours - if tray is wet within this time after last watering,
+             // likely a restart/power-outage scenario (don't punish with interval doubling)
+const unsigned long OVERFLOW_RECOVERY_THRESHOLD_MS =
+    7200000; // 2 hours - if overflow was reset within this time and tray is wet,
+             // skip learning (tray may have been refilled during overflow period)
+
+// ============================================
+// DS3231 Battery Voltage Calibration
+// ============================================
+// Adjust this value to match your multimeter reading
+// Formula: CALIBRATION_FACTOR = (multimeter_voltage / raw_reading)
+// Example: If multimeter shows 3.23V and program shows 3.02V:
+//          CALIBRATION_FACTOR = 3.23 / 3.02 = 1.0695
+const float BATTERY_VOLTAGE_CALIBRATION = 1.0695;
+
+// ============================================
+// Debug Configuration
+// ============================================
+#define IS_DEBUG_TO_SERIAL_ENABLED false
+#define IS_DEBUG_TO_TELEGRAM_ENABLED true
+
+// ============================================
+// Telegram Queue Configuration
+// ============================================
+const int TELEGRAM_QUEUE_SIZE = 20;        // Max messages in queue
+const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5; // Retry attempts per message
+const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000; // Wait 2s between retries
+const unsigned long TELEGRAM_HTTP_TIMEOUT_MS = 1500; // Keep Telegram failures from blocking local web/API
+const unsigned long TELEGRAM_PROXY_HTTP_TIMEOUT_MS = 4000; // Proxy mode needs extra time for proxy->Telegram roundtrip
+const unsigned long TELEGRAM_COMMAND_POLL_INTERVAL_MS = 1000; // Avoid high-rate TLS reconnect churn from 100ms network loop
+const unsigned long TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS = 5000;   // Pause Telegram for 5s after failure
+const unsigned long TELEGRAM_FAILURE_COOLDOWN_MAX_MS = 300000;     // Cap Telegram failure backoff at 5 minutes
+const unsigned long MESSAGE_GROUP_INTERVAL_MS =
+    2000; // Group messages within 2 seconds
+const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
+    180000; // Flush after 3 min max (safety limit)
+
+// Optional monitoring-server Telegram proxy.
+// Keep TELEGRAM_PROXY_BASE_URL empty to use direct api.telegram.org access.
+// Example:
+//   #define TELEGRAM_PROXY_BASE_URL "https://monitoring.example.com"
+//   #define TELEGRAM_PROXY_AUTH_TOKEN "your_proxy_api_token"
+#ifndef TELEGRAM_PROXY_BASE_URL
+#define TELEGRAM_PROXY_BASE_URL ""
+#endif
+
+#ifndef TELEGRAM_PROXY_AUTH_TOKEN
+#define TELEGRAM_PROXY_AUTH_TOKEN ""
+#endif
+
+// Metrics proxy uses same base URL and auth as Telegram proxy.
+#ifndef METRICS_PROXY_BASE_URL
+#define METRICS_PROXY_BASE_URL TELEGRAM_PROXY_BASE_URL
+#endif
+
+// ============================================
+// Metrics Log Routing
+// ============================================
+// Global callback for routing log messages to MetricsPusher (Loki).
+// Set by MetricsPusher::init(). Allows headers included before MetricsPusher.h
+// to log without a compile-time dependency on MetricsPusher.
+typedef void (*MetricsLogFn)(const String& level, const String& msg);
+MetricsLogFn g_metricsLog = nullptr;
+
+// Global telegram failure counter (incremented by TelegramNotifier, read by MetricsPusher)
+int g_telegramFailures = 0;
+
+// ============================================
+// Metrics Push Configuration
+// ============================================
+const unsigned long METRICS_PUSH_INTERVAL_ACTIVE_MS = 10000;  // 10s when watering
+const unsigned long METRICS_PUSH_INTERVAL_IDLE_MS = 60000;    // 60s when idle
+const int METRICS_LOG_BUFFER_SIZE = 64;                        // Circular log buffer entries
+const unsigned long METRICS_HTTP_TIMEOUT_MS = 4000;            // HTTP timeout for proxy
+
+// ============================================
+// Serial Configuration
+// ============================================
+#define DEBUG_SERIAL Serial
+#define DEBUG_SERIAL_BAUDRATE 115200
+
+// ============================================
+// WiFi Configuration
+// ============================================
+const int WIFI_MAX_RETRY_ATTEMPTS = 30;
+const int WIFI_RETRY_DELAY_MS = 500;
+
+// WiFi reconnection backoff (v1.17.3)
+const unsigned long WIFI_RECONNECT_BACKOFF_INITIAL_MS = 5000;   // Start with 5s between attempts
+const unsigned long WIFI_RECONNECT_BACKOFF_MAX_MS = 300000;     // Cap at 5 minutes
+const int WIFI_RECONNECT_MAX_ATTEMPTS = 5;                      // 5 retries per attempt (2.5s blocking)
+const unsigned long WIFI_OUTAGE_NOTIFY_THRESHOLD_MS = 60000;    // 1 min before Telegram notification
+
+// ============================================
+// OTA Configuration
+// ============================================
+const char *OTA_HOSTNAME = "esp32-watering";
+
+// ============================================
+// Compile-time Timeout Validation
+// ============================================
+// Ensures safety invariants: emergency timeout must be at least 5s higher than normal
+// Skipped in native tests where TestConfig.h uses static const (not constexpr)
+#ifndef NATIVE_TEST
+#define VALIDATE_TIMEOUT(idx) \
+    static_assert(VALVE_EMERGENCY_TIMEOUTS[idx] >= VALVE_NORMAL_TIMEOUTS[idx] + 5000, \
+        "Emergency timeout must be at least 5s higher than normal for valve " #idx)
+
+VALIDATE_TIMEOUT(0);
+VALIDATE_TIMEOUT(1);
+VALIDATE_TIMEOUT(2);
+VALIDATE_TIMEOUT(3);
+VALIDATE_TIMEOUT(4);
+VALIDATE_TIMEOUT(5);
+
+#undef VALIDATE_TIMEOUT
+
+static_assert(NUM_VALVES == 6, "Timeout arrays must match NUM_VALVES");
+#endif // !NATIVE_TEST
+
+#endif // CONFIG_H
