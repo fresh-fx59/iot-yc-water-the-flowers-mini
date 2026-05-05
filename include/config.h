@@ -108,11 +108,16 @@ static const unsigned long MESSAGE_GROUP_MAX_AGE_MS             = 180000UL;
 // Global callback for routing log messages to MetricsPusher (Loki).
 // Set by MetricsPusher::init(). Allows headers included before MetricsPusher.h
 // to log without a compile-time dependency on MetricsPusher.
+//
+// NOTE: Declared `extern` here so that multiple translation units may include
+// config.h without producing multiple-definition link errors. The single
+// definition lives in src/main.cpp.
 typedef void (*MetricsLogFn)(const String& level, const String& msg);
-MetricsLogFn g_metricsLog = nullptr;
+extern MetricsLogFn g_metricsLog;
 
-// Global telegram failure counter (incremented by TelegramNotifier, read by MetricsPusher)
-int g_telegramFailures = 0;
+// Global telegram failure counter (incremented by TelegramNotifier, read by MetricsPusher).
+// See note above re: extern + single definition in src/main.cpp.
+extern int g_telegramFailures;
 
 // ============================================
 // Metrics Push Configuration (MetricsPusher.h)
