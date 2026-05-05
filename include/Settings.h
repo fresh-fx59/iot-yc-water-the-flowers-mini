@@ -96,7 +96,7 @@ inline bool saveSettings(const Settings& s) {
     f.flush();
     f.close();
     if (n != json.length()) return false;
-    LittleFS.remove(SETTINGS_FILE);
+    // LittleFS rename is atomic and overwrites the destination — no explicit remove.
     return LittleFS.rename(tmpPath, SETTINGS_FILE);
 }
 #endif // !NATIVE_TEST
