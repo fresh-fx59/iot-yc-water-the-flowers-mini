@@ -15,7 +15,7 @@ class WateringController;
 struct Settings;
 class OverflowSensor;
 
-extern WebServer            server;
+extern WebServer            httpServer;   // defined in include/ota.h as `WebServer httpServer(80);`
 extern WateringController*  g_controller_ptr;
 extern Settings*            g_settings_ptr;
 extern OverflowSensor*      g_overflow_ptr;
@@ -30,17 +30,17 @@ inline bool _bootReady() {
 }
 
 inline void _send400(const String& msg) {
-    server.send(400, "application/json",
+    httpServer.send(400, "application/json",
                 String("{\"error\":\"") + msg + "\"}");
 }
 
 inline void _send409(const String& msg) {
-    server.send(409, "application/json",
+    httpServer.send(409, "application/json",
                 String("{\"error\":\"") + msg + "\"}");
 }
 
 inline void _send503() {
-    server.send(503, "application/json", "{\"error\":\"boot_incomplete\"}");
+    httpServer.send(503, "application/json", "{\"error\":\"boot_incomplete\"}");
 }
 
 inline void api_status() {
@@ -77,14 +77,14 @@ inline void api_status() {
 
     String out;
     serializeJson(doc, out);
-    server.send(200, "application/json", out);
+    httpServer.send(200, "application/json", out);
 }
 
 inline void api_water() {
     if (!_bootReady()) { _send503(); return; }
     auto ev = g_controller_ptr->requestManual();
     if (ev == WateringEvent::Started) {
-        server.send(200, "application/json", "{\"ok\":true,\"event\":\"Started\"}");
+        httpServer.send(200, "application/json", "{\"ok\":true,\"event\":\"Started\"}");
         return;
     }
     if (g_controller_ptr->state() == WateringState::WATERING) { _send409("already_running"); return; }
@@ -97,7 +97,7 @@ inline void api_stop() {
     if (!_bootReady()) { _send503(); return; }
     auto ev = g_controller_ptr->abort();
     if (ev == WateringEvent::Aborted) {
-        server.send(200, "application/json", "{\"ok\":true,\"event\":\"Aborted\"}");
+        httpServer.send(200, "application/json", "{\"ok\":true,\"event\":\"Aborted\"}");
         return;
     }
     _send409("no_active_cycle");
@@ -106,13 +106,13 @@ inline void api_stop() {
 inline void api_halt() {
     if (!_bootReady()) { _send503(); return; }
     g_controller_ptr->halt();
-    server.send(200, "application/json", "{\"ok\":true}");
+    httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 inline void api_resume() {
     if (!_bootReady()) { _send503(); return; }
     g_controller_ptr->resume();
-    server.send(200, "application/json", "{\"ok\":true}");
+    httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 inline void api_reset_overflow() {
@@ -120,17 +120,17 @@ inline void api_reset_overflow() {
     g_controller_ptr->setOverflowLatched(false);
     g_overflow_ptr->reset();
     persistState();
-    server.send(200, "application/json", "{\"ok\":true}");
+    httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 inline void api_settings_get() {
     if (!_bootReady()) { _send503(); return; }
-    server.send(200, "application/json", Settings::toJson(*g_settings_ptr));
+    httpServer.send(200, "application/json", Settings::toJson(*g_settings_ptr));
 }
 
 inline void api_settings_post() {
     if (!_bootReady()) { _send503(); return; }
-    String body = server.arg("plain");
+    String body = httpServer.arg("plain");
     Settings parsed;
     if (!Settings::fromJson(body.c_str(), parsed)) { _send400("invalid_json"); return; }
     if (parsed.interval_days   < 1  || parsed.interval_days   > 30)  { _send400("interval_days"); return; }
@@ -147,12 +147,12 @@ inline void api_settings_post() {
     saveSettings(*g_settings_ptr);
     g_controller_ptr->updateSettings(*g_settings_ptr);
     recomputeNextRun();
-    server.send(200, "application/json", "{\"ok\":true}");
+    httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 inline void api_calibrate() {
     if (!_bootReady()) { _send503(); return; }
-    String ref = server.arg("ref");
+    String ref = httpServer.arg("ref");
     if (ref != "wet" && ref != "dry") { _send400("ref must be wet or dry"); return; }
     int raw = Moisture::readAveragedRaw();
     if (ref == "wet") g_settings_ptr->calibration_wet = raw;
@@ -166,7 +166,7 @@ inline void api_calibrate() {
     doc["raw"]  = raw;
     doc["threshold"] = g_settings_ptr->soil_threshold;
     String out; serializeJson(doc, out);
-    server.send(200, "application/json", out);
+    httpServer.send(200, "application/json", out);
 }
 
 inline void api_test_sensor() {
@@ -175,7 +175,7 @@ inline void api_test_sensor() {
     StaticJsonDocument<64> doc;
     doc["raw"] = raw;
     String out; serializeJson(doc, out);
-    server.send(200, "application/json", out);
+    httpServer.send(200, "application/json", out);
 }
 
 inline void api_test_motor() {
@@ -183,28 +183,28 @@ inline void api_test_motor() {
     if (g_controller_ptr->state() == WateringState::WATERING) { _send409("already_running"); return; }
     if (g_controller_ptr->overflowLatched()) { _send409("overflow_latched"); return; }
     if (g_controller_ptr->halted()) { _send409("halted"); return; }
-    int sec = server.arg("seconds").toInt();
+    int sec = httpServer.arg("seconds").toInt();
     if (sec < 1 || sec > 10) { _send400("seconds must be 1..10"); return; }
     digitalWrite(MOTOR_RELAY_PIN, motorOnLevel());
     delay(sec * 1000);
     digitalWrite(MOTOR_RELAY_PIN, motorOffLevel());
-    server.send(200, "application/json", "{\"ok\":true}");
+    httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 } // namespace ApiHandlers
 
 inline void registerApiHandlers() {
-    server.on("/api/status",          HTTP_GET,  ApiHandlers::api_status);
-    server.on("/api/water",           HTTP_POST, ApiHandlers::api_water);
-    server.on("/api/stop",            HTTP_POST, ApiHandlers::api_stop);
-    server.on("/api/halt",            HTTP_POST, ApiHandlers::api_halt);
-    server.on("/api/resume",          HTTP_POST, ApiHandlers::api_resume);
-    server.on("/api/reset_overflow",  HTTP_POST, ApiHandlers::api_reset_overflow);
-    server.on("/api/settings",        HTTP_GET,  ApiHandlers::api_settings_get);
-    server.on("/api/settings",        HTTP_POST, ApiHandlers::api_settings_post);
-    server.on("/api/calibrate",       HTTP_POST, ApiHandlers::api_calibrate);
-    server.on("/api/test_sensor",     HTTP_GET,  ApiHandlers::api_test_sensor);
-    server.on("/api/test_motor",      HTTP_POST, ApiHandlers::api_test_motor);
+    httpServer.on("/api/status",          HTTP_GET,  ApiHandlers::api_status);
+    httpServer.on("/api/water",           HTTP_POST, ApiHandlers::api_water);
+    httpServer.on("/api/stop",            HTTP_POST, ApiHandlers::api_stop);
+    httpServer.on("/api/halt",            HTTP_POST, ApiHandlers::api_halt);
+    httpServer.on("/api/resume",          HTTP_POST, ApiHandlers::api_resume);
+    httpServer.on("/api/reset_overflow",  HTTP_POST, ApiHandlers::api_reset_overflow);
+    httpServer.on("/api/settings",        HTTP_GET,  ApiHandlers::api_settings_get);
+    httpServer.on("/api/settings",        HTTP_POST, ApiHandlers::api_settings_post);
+    httpServer.on("/api/calibrate",       HTTP_POST, ApiHandlers::api_calibrate);
+    httpServer.on("/api/test_sensor",     HTTP_GET,  ApiHandlers::api_test_sensor);
+    httpServer.on("/api/test_motor",      HTTP_POST, ApiHandlers::api_test_motor);
 }
 
 #endif // API_HANDLERS_H
