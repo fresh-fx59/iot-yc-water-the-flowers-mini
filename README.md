@@ -80,6 +80,9 @@ this is a Phase 12 server-side task, not a firmware change.
 ## Documentation
 
 - `MOTHER_PROJECT.md` - provenance and kept/dropped/new module lists.
+- `docs/wiring-diagram.md` - bill of materials, pin assignments,
+  module-by-module hookup, assembly checklist, and troubleshooting
+  matrix. Read this first if you are building the device.
 - `docs/bot-guide.md` - field manual for the Telegram bot, including
   alert glossary, recovery procedures, and a calibration walkthrough.
 - `docs/superpowers/plans/2026-05-05-mini-fork-implementation.md` -
