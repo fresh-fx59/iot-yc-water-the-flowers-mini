@@ -5,13 +5,27 @@
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
+#include <time.h>
 #include "config.h"
 #include "secret.h"
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
+#include "MoistureSensor.h"
+#include "Settings.h"
+#include "WateringController.h"
+#include "OverflowSensor.h"
 
-// Forward declaration — single-zone controller lands in Phase 6.
-class WateringController;
+// ---------------------------------------------------------------------------
+// Phase 9 wiring contract: globals defined in src/main.cpp.
+// We forward-declare via `extern` so this header can compile standalone and
+// reference the orchestration state without pulling main.cpp's includes.
+// All handlers null-check before dereferencing — boot may dispatch a Telegram
+// command before setup() finishes assigning these pointers.
+// ---------------------------------------------------------------------------
+extern WateringController* g_controller_ptr;
+extern Settings*           g_settings_ptr;
+extern OverflowSensor*     g_overflow_ptr;
+extern void                queueTelegramNotification(const String& message);
 
 // ============================================
 // Telegram Notifier Class
@@ -116,10 +130,34 @@ private:
         return usingProxy ? TELEGRAM_PROXY_HTTP_TIMEOUT_MS : TELEGRAM_HTTP_TIMEOUT_MS;
     }
 
-    // TODO Phase 7: build a single-zone command list (water now / status / halt /
-    // resume / time / settime / overflow_status / reset_overflow / reinit_gpio).
+    // Single-zone command list registered with BotFather via setMyCommands.
+    // Keep entries short — Telegram limits each description to 256 chars and
+    // truncates the visible list at ~32 commands.
     static String getBotCommandsJson() {
-        return String("[]");
+        return String(
+            "["
+            "{\"command\":\"menu\",\"description\":\"Show command summary\"},"
+            "{\"command\":\"help\",\"description\":\"List all commands\"},"
+            "{\"command\":\"water\",\"description\":\"Run a manual watering cycle\"},"
+            "{\"command\":\"stop\",\"description\":\"Abort the active cycle\"},"
+            "{\"command\":\"status\",\"description\":\"Show device status\"},"
+            "{\"command\":\"halt\",\"description\":\"Block all watering\"},"
+            "{\"command\":\"resume\",\"description\":\"Re-enable watering\"},"
+            "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow latch\"},"
+            "{\"command\":\"overflow_status\",\"description\":\"Show overflow sensor state\"},"
+            "{\"command\":\"reinit_gpio\",\"description\":\"Re-init motor and overflow pins\"},"
+            "{\"command\":\"time\",\"description\":\"Show RTC time\"},"
+            "{\"command\":\"settime\",\"description\":\"Set RTC time YYYY-MM-DD HH:MM:SS\"},"
+            "{\"command\":\"set_interval\",\"description\":\"Set watering interval (days)\"},"
+            "{\"command\":\"set_time\",\"description\":\"Set schedule HH:MM\"},"
+            "{\"command\":\"set_runtime\",\"description\":\"Set max runtime (sec)\"},"
+            "{\"command\":\"set_threshold\",\"description\":\"Set soil threshold (raw)\"},"
+            "{\"command\":\"calibrate_wet\",\"description\":\"Calibrate wet soil reading\"},"
+            "{\"command\":\"calibrate_dry\",\"description\":\"Calibrate dry soil reading\"},"
+            "{\"command\":\"test_motor\",\"description\":\"Pulse motor for N seconds\"},"
+            "{\"command\":\"test_sensor\",\"description\":\"Print current soil reading\"}"
+            "]"
+        );
     }
 
     static void logTransportLocalOnly(const String& message) {
@@ -324,14 +362,48 @@ public:
         return success;
     }
 
-    // TODO Phase 7: real /help text for the single-zone bot.
+    // Plain-text help for the single-zone bot. No emojis (project preference).
     static String getHelpMessage() {
-        return String("Mini watering bot — help text lands in Phase 7.");
+        String h;
+        h += "<b>Mini watering bot</b>\n";
+        h += "\n<b>Control</b>\n";
+        h += "/menu, /help - this list\n";
+        h += "/water - run a manual cycle\n";
+        h += "/stop - abort the active cycle\n";
+        h += "/status - show current device state\n";
+        h += "/halt - block all watering\n";
+        h += "/resume - re-enable watering\n";
+        h += "/reset_overflow - clear overflow latch\n";
+        h += "/overflow_status - show overflow sensor state\n";
+        h += "/reinit_gpio - re-init motor and overflow pins\n";
+        h += "\n<b>Settings</b>\n";
+        h += "/set_interval &lt;days&gt; - 1..30\n";
+        h += "/set_time HH:MM - schedule\n";
+        h += "/set_runtime &lt;sec&gt; - 10..600\n";
+        h += "/set_threshold &lt;raw&gt; - 0..4095\n";
+        h += "/calibrate_wet - capture wet soil reading\n";
+        h += "/calibrate_dry - capture dry soil reading\n";
+        h += "\n<b>Time</b>\n";
+        h += "/time - show RTC time\n";
+        h += "/settime [YYYY-MM-DD HH:MM:SS] - set RTC time\n";
+        h += "\n<b>Diagnostics</b>\n";
+        h += "/test_motor &lt;sec&gt; - pulse motor 1..10s\n";
+        h += "/test_sensor - print soil raw value\n";
+        return h;
     }
 
-    // TODO Phase 7: inline keyboard for /menu (water now / halt / resume / status).
+    // Inline keyboard for /menu — 4-button quick panel.
     static String getMainMenuKeyboard() {
-        return String("{\"inline_keyboard\":[]}");
+        return String(
+            "{\"inline_keyboard\":["
+            "[{\"text\":\"Water\",\"callback_data\":\"/water\"},"
+            "{\"text\":\"Stop\",\"callback_data\":\"/stop\"}],"
+            "[{\"text\":\"Status\",\"callback_data\":\"/status\"},"
+            "{\"text\":\"Halt\",\"callback_data\":\"/halt\"}],"
+            "[{\"text\":\"Resume\",\"callback_data\":\"/resume\"},"
+            "{\"text\":\"Help\",\"callback_data\":\"/help\"}]"
+            "]}"
+        );
     }
 
     static void answerCallbackQuery() {
@@ -428,14 +500,398 @@ public:
         http.end();
     }
 
-    // TODO Phase 7: format a "watering started" notification for the single zone
-    // (trigger + planned duration). Mother's multi-tray formatter intentionally
-    // dropped — see git history of include/TelegramNotifier.h for reference.
+    // ========================================================================
+    // Single-zone formatters (plain text, no emojis per project preference).
+    // Used by the dispatcher below and by orchestrator notifications.
+    // ========================================================================
 
-    // TODO Phase 7: format a "watering complete" notification for the single zone
-    // (actual duration + final soil reading + skipped/wet flag if applicable).
+    static String formatWateringStarted() {
+        return String("Watering started.");
+    }
 
-    // TODO Phase 7: format a "next planned watering" notification (date + time).
+    static String formatWateringComplete() {
+        return String("Watering complete.");
+    }
+
+    static String formatWateringAborted() {
+        return String("Watering aborted by /stop.");
+    }
+
+    static String formatScheduleSkippedWet(int consecutive_count) {
+        return String("Schedule skipped - soil already wet (count=") +
+               String(consecutive_count) + ").";
+    }
+
+    static String formatScheduleSkippedWetEscalated(int consecutive_count) {
+        return String("Skipped wet count=") + String(consecutive_count) +
+               " - verify sensor before plants die.";
+    }
+
+    static String formatTimeoutAlert() {
+        return String(
+            "Watering timeout: soil never reached threshold. "
+            "Sensor stuck dry, leak, or pots not absorbing? last_run NOT advanced."
+        );
+    }
+
+    static String formatOverflowTripped(int raw_value, int streak) {
+        return String("Overflow tripped (raw=") + String(raw_value) +
+               ", streak=" + String(streak) +
+               "). Motor halted. Run /reset_overflow to clear.";
+    }
+
+    static String formatOverflowReset() {
+        return String("Overflow latch cleared.");
+    }
+
+    static String formatBootBanner(const String& version, const String& ip) {
+        return String("mini v") + version + " online - IP " + ip + ".";
+    }
+
+    static String formatWiFiRecovered(unsigned long outage_minutes) {
+        return String("WiFi reconnected after ") + String(outage_minutes) +
+               " min outage.";
+    }
+
+    // Multi-line dump of /status — pulls fresh data from globals; null-checks
+    // each pointer because boot may dispatch /status before setup() finishes.
+    static String formatStatus() {
+        String s;
+
+        // State + motor
+        if (g_controller_ptr) {
+            const bool watering =
+                g_controller_ptr->state() == WateringState::WATERING;
+            s += "state=";
+            s += watering ? "WATERING" : "IDLE";
+            s += "\nmotor=";
+            s += watering ? "on" : "off";
+            s += "\nhalted=";
+            s += g_controller_ptr->halted() ? "yes" : "no";
+            s += "\nconsecutive_skips_wet=";
+            s += String(g_controller_ptr->consecutiveSkipsWet());
+            s += "\nlast_run_unix=";
+            s += String((long)g_controller_ptr->lastRunUnix());
+            s += "\nnext_run_unix=";
+            s += String((long)g_controller_ptr->nextRunUnix());
+        } else {
+            s += "controller=unavailable";
+        }
+
+        // Soil reading + threshold
+        s += "\nsoil_raw=";
+        int raw = Moisture::readAveragedRaw();
+        s += String(raw);
+        if (g_settings_ptr) {
+            s += "\nsoil_threshold=";
+            s += String(g_settings_ptr->soil_threshold);
+            int pct = Moisture::pctFromCalibration(
+                raw,
+                g_settings_ptr->calibration_wet,
+                g_settings_ptr->calibration_dry);
+            if (pct >= 0) {
+                s += "\nsoil_pct=";
+                s += String(pct);
+            }
+        }
+
+        // Overflow
+        if (g_overflow_ptr) {
+            s += "\noverflow_latched=";
+            s += g_overflow_ptr->latched() ? "yes" : "no";
+            s += "\noverflow_streak=";
+            s += String(g_overflow_ptr->triggerStreak());
+        }
+
+        return s;
+    }
+
+    // ========================================================================
+    // Time helpers (used by /time and /settime handlers)
+    // ========================================================================
+
+    static String formatRtcTime() {
+        time_t t = DS3231RTC::getTime();
+        struct tm tm_buf;
+        gmtime_r(&t, &tm_buf);
+        char buffer[24];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm_buf);
+        return String(buffer);
+    }
+
+    // Strict YYYY-MM-DD HH:MM:SS parser. Returns true and writes `out` on success.
+    static bool parseRtcTimestamp(const String& arg, time_t& out) {
+        if (arg.length() != 19) return false;
+        if (arg.charAt(4) != '-' || arg.charAt(7) != '-' ||
+            arg.charAt(10) != ' ' ||
+            arg.charAt(13) != ':' || arg.charAt(16) != ':') {
+            return false;
+        }
+        int Y = arg.substring(0, 4).toInt();
+        int M = arg.substring(5, 7).toInt();
+        int D = arg.substring(8, 10).toInt();
+        int h = arg.substring(11, 13).toInt();
+        int m = arg.substring(14, 16).toInt();
+        int sc = arg.substring(17, 19).toInt();
+        if (Y < 2024 || Y > 2099) return false;
+        if (M < 1 || M > 12) return false;
+        if (D < 1 || D > 31) return false;
+        if (h < 0 || h > 23) return false;
+        if (m < 0 || m > 59) return false;
+        if (sc < 0 || sc > 59) return false;
+        struct tm tm_buf{};
+        tm_buf.tm_year = Y - 1900;
+        tm_buf.tm_mon  = M - 1;
+        tm_buf.tm_mday = D;
+        tm_buf.tm_hour = h;
+        tm_buf.tm_min  = m;
+        tm_buf.tm_sec  = sc;
+        out = mktime(&tm_buf);
+        return out > 0;
+    }
+
+    // ========================================================================
+    // Command handlers — invoked by the dispatcher.
+    // Each one defends against pre-setup() boot ordering by null-checking.
+    // ========================================================================
+
+    static void handleWater() {
+        if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
+        WateringEvent ev = g_controller_ptr->requestManual();
+        if (ev == WateringEvent::Started) {
+            sendMessage(formatWateringStarted());
+        } else if (ev == WateringEvent::Rejected) {
+            if (g_controller_ptr->state() == WateringState::WATERING) {
+                sendMessage("Already watering.");
+            } else if (g_controller_ptr->overflowLatched()) {
+                sendMessage("Overflow latched - run /reset_overflow first.");
+            } else if (g_controller_ptr->halted()) {
+                sendMessage("Halted - run /resume first.");
+            } else {
+                sendMessage("Rejected.");
+            }
+        } else {
+            sendMessage("Unexpected event from controller.");
+        }
+    }
+
+    static void handleHalt() {
+        if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
+        g_controller_ptr->halt();
+        sendMessage("Halted. /resume to re-enable schedule.");
+    }
+
+    static void handleResume() {
+        if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
+        g_controller_ptr->resume();
+        sendMessage("Resumed.");
+    }
+
+    static void handleStop() {
+        if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
+        WateringEvent ev = g_controller_ptr->abort();
+        if (ev == WateringEvent::Aborted) {
+            sendMessage(formatWateringAborted());
+        } else {
+            sendMessage("No active cycle to stop.");
+        }
+    }
+
+    static void handleResetOverflow() {
+        if (!g_controller_ptr || !g_overflow_ptr) {
+            sendMessage("Boot incomplete.");
+            return;
+        }
+        g_controller_ptr->setOverflowLatched(false);
+        g_overflow_ptr->reset();
+        sendMessage(formatOverflowReset());
+    }
+
+    static void handleOverflowStatus() {
+        if (!g_overflow_ptr) { sendMessage("Boot incomplete."); return; }
+        int streak = g_overflow_ptr->triggerStreak();
+        int raw = digitalRead(OVERFLOW_SENSOR_DO_PIN);
+        bool latched = g_overflow_ptr->latched();
+        sendMessage(String("overflow latched=") + (latched ? "yes" : "no") +
+                    " streak=" + String(streak) +
+                    " raw=" + String(raw));
+    }
+
+    static void handleReinitGpio() {
+        pinMode(MOTOR_RELAY_PIN, OUTPUT);
+        digitalWrite(MOTOR_RELAY_PIN, motorOffLevel());
+        pinMode(OVERFLOW_SENSOR_DO_PIN, INPUT_PULLUP);
+        sendMessage("GPIO reinit complete.");
+    }
+
+    static void handleTime() {
+        sendMessage(String("RTC time: ") + formatRtcTime());
+    }
+
+    static void handleSetTime(const String& text) {
+        // Accept either "/settime" (no arg = report current) or
+        // "/settime YYYY-MM-DD HH:MM:SS".
+        String arg = text;
+        int sp = arg.indexOf(' ');
+        if (sp < 0) {
+            sendMessage(String("RTC time: ") + formatRtcTime() +
+                        "\nUsage: /settime YYYY-MM-DD HH:MM:SS");
+            return;
+        }
+        arg = arg.substring(sp + 1);
+        arg.trim();
+        time_t parsed;
+        if (!parseRtcTimestamp(arg, parsed)) {
+            sendMessage("Usage: /settime YYYY-MM-DD HH:MM:SS");
+            return;
+        }
+        DS3231RTC::setTime(parsed);
+        // Also align ESP32 system clock so reads via time() match.
+        struct timeval tv{ parsed, 0 };
+        settimeofday(&tv, nullptr);
+        sendMessage(String("RTC set to ") + formatRtcTime());
+    }
+
+    static void handleSetInterval(const String& text) {
+        if (!g_settings_ptr) { sendMessage("Boot incomplete."); return; }
+        const char* prefix = "/set_interval ";
+        int days = text.substring(strlen(prefix)).toInt();
+        if (days < 1 || days > 30) {
+            sendMessage("interval must be 1..30 days");
+            return;
+        }
+        g_settings_ptr->interval_days = days;
+        saveSettings(*g_settings_ptr);
+        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        sendMessage(String("interval=") + String(days) + " days");
+    }
+
+    static void handleSetSchedHM(const String& text) {
+        if (!g_settings_ptr) { sendMessage("Boot incomplete."); return; }
+        const char* prefix = "/set_time ";
+        String arg = text.substring(strlen(prefix));
+        arg.trim();
+        int colon = arg.indexOf(':');
+        if (colon < 0) { sendMessage("usage: /set_time HH:MM"); return; }
+        int h = arg.substring(0, colon).toInt();
+        int m = arg.substring(colon + 1).toInt();
+        if (h < 0 || h > 23 || m < 0 || m > 59) {
+            sendMessage("invalid HH:MM");
+            return;
+        }
+        g_settings_ptr->schedule_hour = h;
+        g_settings_ptr->schedule_minute = m;
+        saveSettings(*g_settings_ptr);
+        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
+        sendMessage(String("schedule=") + buf);
+    }
+
+    static void handleSetRuntime(const String& text) {
+        if (!g_settings_ptr) { sendMessage("Boot incomplete."); return; }
+        const char* prefix = "/set_runtime ";
+        int sec = text.substring(strlen(prefix)).toInt();
+        if (sec < 10 || sec > 600) {
+            sendMessage("runtime must be 10..600 sec");
+            return;
+        }
+        g_settings_ptr->max_runtime_sec = sec;
+        saveSettings(*g_settings_ptr);
+        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        sendMessage(String("runtime=") + String(sec) + "s");
+    }
+
+    static void handleSetThreshold(const String& text) {
+        if (!g_settings_ptr) { sendMessage("Boot incomplete."); return; }
+        const char* prefix = "/set_threshold ";
+        int t = text.substring(strlen(prefix)).toInt();
+        if (t < 0 || t > 4095) {
+            sendMessage("threshold must be 0..4095");
+            return;
+        }
+        g_settings_ptr->soil_threshold = t;
+        saveSettings(*g_settings_ptr);
+        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        sendMessage(String("threshold=") + String(t));
+    }
+
+    static void handleCalibrate(bool wet) {
+        if (!g_settings_ptr) { sendMessage("Boot incomplete."); return; }
+        int raw = Moisture::readAveragedRaw();
+        if (wet) g_settings_ptr->calibration_wet = raw;
+        else     g_settings_ptr->calibration_dry = raw;
+        *g_settings_ptr = Settings::deriveThreshold(*g_settings_ptr);
+        saveSettings(*g_settings_ptr);
+        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        sendMessage(String(wet ? "calibration_wet=" : "calibration_dry=") +
+                    String(raw) +
+                    " threshold=" + String(g_settings_ptr->soil_threshold));
+    }
+
+    static void handleTestSensor() {
+        int raw = Moisture::readAveragedRaw();
+        sendMessage(String("soil raw=") + String(raw));
+    }
+
+    static void handleTestMotor(const String& text) {
+        const char* prefix = "/test_motor ";
+        int sec = text.substring(strlen(prefix)).toInt();
+        if (sec < 1 || sec > 10) {
+            sendMessage("test_motor must be 1..10 sec");
+            return;
+        }
+        digitalWrite(MOTOR_RELAY_PIN, motorOnLevel());
+        delay(sec * 1000);
+        digitalWrite(MOTOR_RELAY_PIN, motorOffLevel());
+        sendMessage(String("motor pulsed ") + String(sec) + "s");
+    }
+
+    // ========================================================================
+    // Dispatcher — sequential prefix-match. Mother's main.cpp had a similar
+    // chain; we keep it inline so headers are self-contained.
+    // ========================================================================
+
+    static void processCommand(const String& raw) {
+        String text = raw;
+        text.trim();
+        if (text.length() == 0) return;
+
+        if (text == "/menu" || text == "menu") {
+            sendMessageWithKeyboard(getHelpMessage(), getMainMenuKeyboard());
+            return;
+        }
+        if (text == "/help" || text == "help") {
+            sendMessage(getHelpMessage());
+            return;
+        }
+        if (text == "/water" || text == "water") { handleWater(); return; }
+        if (text == "/stop"  || text == "stop")  { handleStop();  return; }
+        if (text == "/halt"  || text == "halt")  { handleHalt();  return; }
+        if (text == "/resume" || text == "resume") { handleResume(); return; }
+        if (text == "/status" || text == "status") {
+            sendMessage(formatStatus());
+            return;
+        }
+        if (text == "/reset_overflow")  { handleResetOverflow();  return; }
+        if (text == "/overflow_status") { handleOverflowStatus(); return; }
+        if (text == "/reinit_gpio")     { handleReinitGpio();     return; }
+        if (text == "/time")            { handleTime();           return; }
+        if (text == "/calibrate_wet")   { handleCalibrate(true);  return; }
+        if (text == "/calibrate_dry")   { handleCalibrate(false); return; }
+        if (text == "/test_sensor")     { handleTestSensor();     return; }
+        if (text == "/settime" || text.startsWith("/settime ")) {
+            handleSetTime(text);
+            return;
+        }
+        if (text.startsWith("/set_interval "))  { handleSetInterval(text);  return; }
+        if (text.startsWith("/set_time "))      { handleSetSchedHM(text);   return; }
+        if (text.startsWith("/set_runtime "))   { handleSetRuntime(text);   return; }
+        if (text.startsWith("/set_threshold ")) { handleSetThreshold(text); return; }
+        if (text.startsWith("/test_motor "))    { handleTestMotor(text);    return; }
+
+        sendMessage("Unknown command - try /help");
+    }
 
     // Check for Telegram commands using long polling.
     // Returns the command string or an empty string if no new command is found.

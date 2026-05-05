@@ -7,9 +7,19 @@
 #include <WiFiClientSecure.h>
 #include <time.h>
 #include "config.h"
+#include "MoistureSensor.h"
+#include "Settings.h"
+#include "WateringController.h"
+#include "OverflowSensor.h"
 
-// Forward declaration — single-zone controller lands in Phase 6.
-class WateringController;
+// ---------------------------------------------------------------------------
+// Phase 9 globals (defined in src/main.cpp). Used by buildMetricsJson() so the
+// payload reflects current device state. Each access is null-checked because
+// MetricsPusher::loop() may run before setup() finishes wiring them.
+// ---------------------------------------------------------------------------
+extern WateringController* g_controller_ptr;
+extern Settings*           g_settings_ptr;
+extern OverflowSensor*     g_overflow_ptr;
 
 // ============================================
 // Metrics Log Entry
@@ -101,9 +111,11 @@ public:
         addLogEntry(level, msg);
     }
 
-    // Phase 1: signature uses void* placeholder so the file compiles without
-    // the dropped WateringSystem type. Phase 7 will swap to WateringController*.
-    static void init(void* /*controller*/ = nullptr) {
+    // Phase 7: relies on the file-scope globals (g_controller_ptr etc.) rather
+    // than stashing local pointers. The single-zone state is small enough that
+    // direct reads inside buildMetricsJson() are simpler than threading state
+    // through init(). Caller must define the globals before init() returns.
+    static void init() {
         logHead = 0;
         logTail = 0;
         logCount = 0;
@@ -111,7 +123,7 @@ public:
         lastLogPushHttpCode = 0;
         logPushAttempts = 0;
         logPushSuccesses = 0;
-        // Set global callback so all headers can route logs to Loki
+        // Set global callback so all headers can route logs to Loki.
         g_metricsLog = metricsLogCallback;
     }
 
@@ -149,9 +161,11 @@ inline void MetricsPusher::loop() {
     if (!useProxy() || !WiFi.isConnected()) return;
 
     unsigned long now = millis();
-    // Phase 1: no controller hookup yet, so always treat as idle.
-    // Phase 7 will check WateringController state to use the active interval.
-    unsigned long interval = METRICS_PUSH_INTERVAL_IDLE_MS;
+    // Active when the single zone is currently watering — pace 10s vs 60s idle.
+    const bool active = (g_controller_ptr != nullptr) &&
+                        (g_controller_ptr->state() == WateringState::WATERING);
+    unsigned long interval = active ? METRICS_PUSH_INTERVAL_ACTIVE_MS
+                                    : METRICS_PUSH_INTERVAL_IDLE_MS;
 
     if (lastPushTime != 0 && (now - lastPushTime) < interval) return;
     lastPushTime = now;
@@ -174,16 +188,62 @@ inline void MetricsPusher::loop() {
 }
 
 inline String MetricsPusher::buildMetricsJson() {
+    // Single-zone payload. Shape matches tools/esp32_metrics_proxy.py
+    // expectations — proxy converts each key to a Prometheus gauge.
     String json = "{";
 
-    // Phase 1: emit only device-wide gauges. Phase 7 adds single-zone metrics:
-    //   pump, soil_raw, soil_calibrated, overflow, motor_runtime_s, last_water_ts,
-    //   next_water_ts, skip_count_consecutive_wet, halt, settings_version.
-    json += "\"device\":\"watering-system-mini\"";
+    // ---- Device-wide ----
+    json += "\"device\":\"mini\"";
     json += ",\"uptime_ms\":" + String(millis());
     json += ",\"rssi\":" + String(WiFi.RSSI());
 
-    // Log push diagnostics (visible in Prometheus for debugging)
+    // ---- Watering state ----
+    const bool watering = (g_controller_ptr != nullptr) &&
+                          (g_controller_ptr->state() == WateringState::WATERING);
+    json += ",\"motor_on\":" + String(watering ? 1 : 0);
+    json += ",\"state\":" + String(watering ? 1 : 0);
+    json += ",\"halted\":" +
+            String((g_controller_ptr && g_controller_ptr->halted()) ? 1 : 0);
+    json += ",\"consecutive_skips_wet\":" +
+            String(g_controller_ptr ? g_controller_ptr->consecutiveSkipsWet() : 0);
+    json += ",\"schedule_last_run_unix\":" +
+            String(g_controller_ptr ? (long)g_controller_ptr->lastRunUnix() : 0L);
+    json += ",\"schedule_next_run_unix\":" +
+            String(g_controller_ptr ? (long)g_controller_ptr->nextRunUnix() : 0L);
+
+    // ---- Soil sensor ----
+    int soil_raw = Moisture::readAveragedRaw();
+    json += ",\"soil_raw\":" + String(soil_raw);
+    if (g_settings_ptr) {
+        json += ",\"soil_threshold\":" + String(g_settings_ptr->soil_threshold);
+        int pct = Moisture::pctFromCalibration(
+            soil_raw,
+            g_settings_ptr->calibration_wet,
+            g_settings_ptr->calibration_dry);
+        // -1 means uncalibrated; emit 0 so Prometheus has a numeric gauge.
+        json += ",\"soil_pct\":" + String(pct < 0 ? 0 : pct);
+    } else {
+        json += ",\"soil_threshold\":0";
+        json += ",\"soil_pct\":0";
+    }
+
+    // ---- Overflow sensor ----
+    if (g_overflow_ptr) {
+        json += ",\"overflow_latched\":" +
+                String(g_overflow_ptr->latched() ? 1 : 0);
+        json += ",\"overflow_streak\":" +
+                String(g_overflow_ptr->triggerStreak());
+    } else {
+        json += ",\"overflow_latched\":0";
+        json += ",\"overflow_streak\":0";
+    }
+    // Raw pin reading — useful for distinguishing "sensor wired but quiet"
+    // from "sensor missing entirely".
+    json += ",\"overflow_raw\":" +
+            String(digitalRead(OVERFLOW_SENSOR_DO_PIN));
+
+    // ---- Self-diagnostics for the log push pipeline ----
+    json += ",\"telegram_failures\":" + String(g_telegramFailures);
     json += ",\"log_buffer_count\":" + String(logCount);
     json += ",\"log_push_last_code\":" + String(lastLogPushHttpCode);
     json += ",\"log_push_attempts\":" + String(logPushAttempts);
@@ -250,7 +310,7 @@ inline String MetricsPusher::buildLogsJson() {
         if (groups[g].count == 0) continue;
         if (!first) json += ",";
         first = false;
-        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"watering-system-mini\",\"level\":\"" + groups[g].level + "\"},";
+        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"mini\",\"level\":\"" + groups[g].level + "\"},";
         json += "\"values\":[" + groups[g].values + "]}";
     }
     json += "]}";
