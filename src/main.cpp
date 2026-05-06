@@ -237,10 +237,20 @@ void networkTask(void* /*pvParameters*/) {
     MetricsPusher::init();             // installs g_metricsLog callback
     TelegramNotifier::ensureBotCommandsRegistered();   // best-effort
 
+    static bool boot_banner_sent = false;
+
     for (;;) {
         NetworkManager::loopWiFi();
 
         if (NetworkManager::isWiFiConnected()) {
+            // First-WiFi-up only: announce boot to the user. Cannot do this in
+            // setup() because notificationQueue is created after connectWiFi().
+            if (!boot_banner_sent) {
+                queueTelegramNotification(
+                    TelegramNotifier::formatBootBanner(FIRMWARE_VERSION, WiFi.localIP().toString()));
+                boot_banner_sent = true;
+            }
+
             httpServer.handleClient();
 
             // Telegram inbound (long-poll, returns ASAP if no message).
