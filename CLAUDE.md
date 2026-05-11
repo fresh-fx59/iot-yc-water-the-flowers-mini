@@ -5,8 +5,8 @@ Guidance for Claude Code (claude.ai/code) working in this repo.
 ESP32-S3 single-zone watering controller: 1 motor (pump), 1 capacitive soil probe, 1 rain-drop overflow sensor, DS3231 RTC, daily cron-style schedule, Telegram bot, minimal web UI. Fork-and-strip of the 6-valve `iot-yc-water-the-flowers` mother — see `MOTHER_PROJECT.md` for provenance.
 
 **Stack**: ESP32-S3-N16R8 (YD-ESP32-23 v1.3), LittleFS, ArduinoJson 6.21.0, DS3231 RTC (I2C SDA=14/SCL=3)
-**Version**: 1.0.2 (`config.h:7`)
-**Testing**: 42 native unit tests (desktop, no hardware) in `test/`
+**Version**: 1.2.0 (`config.h:7`)
+**Testing**: 71 native unit tests (desktop, no hardware) in `test/`
 
 ## Build & Deploy
 
@@ -64,7 +64,8 @@ All logic lives in `include/*.h` as inline headers. `src/main.cpp` is the only T
 - `DebugHelper.h` — log helper; routes to Loki via `g_metricsLog` callback
 - `DS3231RTC.h` — RTC driver, sole time source (no NTP)
 - `api_handlers.h` — HTTP API (inline namespace), registered via `registerApiHandlers()`
-- `ota.h` — HTTP OTA + WebServer + static file routing (mother, unchanged)
+- `ota.h` — local HTTP OTA + WebServer + static file routing (mother, unchanged)
+- `FirmwareUpdater.h` — Telegram-driven remote OTA with app-level auto-rollback. Pure decision core (`decideUpdate`/`decideTrialAction`/`parseManifest`/`compareVersion`) is unit-tested; hardware-bound entries (`checkAndApply`, `rollbackToOtherPartition`, `handleBootTrial`, `loopHealthCheck`) call `Update.h`, `esp_ota_*`, mbedtls, and Preferences (NVS).
 - `secret.h` — credentials (never commit)
 - `TestConfig.h` — pin/constant stubs for native tests
 
@@ -128,11 +129,12 @@ All external services run on a single VPS, reused unchanged from the mother. SSH
 
 ## Telegram
 
-**Commands** (from `TelegramNotifier::getHelpText`, 20 total):
+**Commands** (from `TelegramNotifier::getHelpText`, 23 total):
 - **Control**: `/menu`, `/help`, `/water`, `/stop`, `/status`, `/halt`, `/resume`, `/reset_overflow`, `/overflow_status`, `/reinit_gpio`
 - **Settings**: `/set_interval <days>` (1..30), `/set_time HH:MM`, `/set_runtime <sec>` (10..600), `/set_threshold <raw>` (0..4095), `/calibrate_wet`, `/calibrate_dry`
 - **Time**: `/time`, `/settime [YYYY-MM-DD HH:MM:SS]` (UTC)
 - **Diagnostics**: `/test_motor <sec>` (1..10), `/test_sensor`
+- **Firmware**: `/check_update`, `/check_update force` (re-flash same version), `/rollback` (boot the other partition)
 
 `/menu` shows a 6-button inline keyboard: Water, Stop, Status, Halt, Resume, Help.
 
@@ -158,7 +160,7 @@ All external services run on a single VPS, reused unchanged from the mother. SSH
 
 **ESP32 firmware**: `MetricsPusher.h` runs on Core 0 in `networkTask`. Log buffer: 64 entries circular. Push intervals: `METRICS_PUSH_INTERVAL_ACTIVE_MS=10000`, `METRICS_PUSH_INTERVAL_IDLE_MS=60000`. Uses same proxy URL and auth token as Telegram proxy.
 
-**Grafana dashboard**: `tools/grafana-dashboard-esp32-mini.json` (import once metrics proxy is updated).
+**Grafana dashboards**: `tools/grafana-dashboard-esp32-mini.json` (single device) and `tools/grafana-dashboard-esp32-multidevice.json` (two minis filtered by `$device`; see `docs/grafana-dashboard.md` for import + the MetricsPusher device-label change still required for cross-device disambiguation).
 
 **Monitoring not working? Checklist**:
 1. `sudo systemctl status esp32-metrics-proxy` → restart if needed
@@ -199,7 +201,7 @@ All external services run on a single VPS, reused unchanged from the mother. SSH
 
 **Board**: YD-ESP32-23 v1.3 (N16R8 — 16 MB flash, 8 MB octal PSRAM). `platformio.ini` sets `qio_opi` memory type and 16MB flash overrides.
 
-**Sensors**: capacitive soil probe runs on **3.3V** (5V exceeds ADC range and corrupts readings). Rain-drop module mounted as floor overflow detector — DO line, AO unused.
+**Sensors**: capacitive soil probe runs on **3.3V** (5V exceeds ADC range and corrupts readings). Rain-drop module mounted as floor overflow detector — DO line, AO unused. See `docs/soil-sensor-failure-modes.md` for the three known failure modes of the cheap v1.2 capacitive probe (silent NE555 substitution, R4-pulldown open, edge-corrosion drift) and bench-detection procedure.
 
 **Relay polarity**: most cheap 5V relay modules are *active-LOW*. Check with `/test_motor 1`: if relay LED is inverted from expected, flip `MOTOR_RELAY_ACTIVE_HIGH = false` in `config.h`.
 
@@ -222,6 +224,19 @@ See `docs/wiring-diagram.md` for bill of materials, schematic, module-by-module 
 **Monitoring**: `MetricsPusher.h` (ESP32 push), `tools/esp32_metrics_proxy.py` (server proxy). Add log capture with `MetricsPusher::logInfo/logWarn/logError()`. Metrics JSON shape lives in `MetricsPusher::buildMetricsJson()`.
 
 **Config**: `config.h` (pins, timing, defaults, file paths), `secret.h` (credentials, never commit).
+
+**Remote OTA** (`FirmwareUpdater.h`, spec in `docs/superpowers/specs/2026-05-12-remote-ota-design.md`):
+
+The device pulls firmware from `https://<proxy>/v1/firmware/` on demand. Trigger flow:
+
+1. Bump `FIRMWARE_VERSION` in `config.h` BEFORE the build.
+2. `pio run -e esp32-s3-devkitc-1` → produces `.pio/build/esp32-s3-devkitc-1/firmware.bin`.
+3. `tools/publish-firmware.sh .pio/build/esp32-s3-devkitc-1/firmware.bin <version> ["notes"]` — computes sha256, scps both .bin and manifest.json to Cloud.ru, atomic-renames manifest. Env: `OTA_SSH_TARGET` (default `user1@45.151.30.146`), `OTA_REMOTE_DIR` (default `/var/www/firmware`).
+4. From phone: `/check_update`. Device fetches manifest, verifies version > running (or `force`), downloads with streaming SHA-256, calls `Update.end(true)`, reboots.
+
+Auto-rollback uses an NVS-backed trial-state machine, not the IDF `pending_verify` mechanism (which requires an sdkconfig flag that arduino-esp32 doesn't ship). On post-update boot: `setup()` calls `FirmwareUpdater::handleBootTrial()` which decides NewBoot / PendingRollback / RolledBack from the NVS `target_label` vs the running partition's label and the `attempts` counter. Health is confirmed by the first successful `MetricsPusher` push (`MetricsPusher::successfulMetricsPushes >= 1`). If no healthy push within `OTA_HEALTH_DEADLINE_MS` (5 min), `loopHealthCheck()` forces a rollback. Manual rollback via `/rollback` calls `esp_ota_set_boot_partition()` on the other slot.
+
+Server setup: `tools/nginx-firmware-snippet.conf` is a drop-in `location /v1/firmware/` block guarding the static dir with the same bearer-token check used by the metrics/telegram proxies.
 
 ## Gotchas
 

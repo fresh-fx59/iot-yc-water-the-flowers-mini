@@ -51,6 +51,16 @@ private:
     static int logPushAttempts;
     static int logPushSuccesses;
 
+public:
+    // Bumped on each successful (2xx) metrics push. Read by
+    // FirmwareUpdater::loopHealthCheck() as the "we can reach the operator"
+    // health signal for OTA trial-boot confirmation. Volatile because the
+    // increment happens on Core 0 and the read also happens on Core 0, but the
+    // qualifier costs nothing and documents the cross-module contract.
+    static volatile uint32_t successfulMetricsPushes;
+
+private:
+
     // HTTP helpers (same pattern as TelegramNotifier)
     static bool useProxy() {
         return String(METRICS_PROXY_BASE_URL).length() > 0;
@@ -152,6 +162,7 @@ unsigned long MetricsPusher::lastPushTime = 0;
 int MetricsPusher::lastLogPushHttpCode = 0;
 int MetricsPusher::logPushAttempts = 0;
 int MetricsPusher::logPushSuccesses = 0;
+volatile uint32_t MetricsPusher::successfulMetricsPushes = 0;
 
 // ============================================
 // Implementation
@@ -338,7 +349,9 @@ inline bool MetricsPusher::pushMetrics(const String& json) {
     int httpCode = http.POST(json);
     http.end();
 
-    return (httpCode >= 200 && httpCode < 300);
+    bool ok = (httpCode >= 200 && httpCode < 300);
+    if (ok) successfulMetricsPushes++;
+    return ok;
 }
 
 inline bool MetricsPusher::pushLogs(const String& json) {

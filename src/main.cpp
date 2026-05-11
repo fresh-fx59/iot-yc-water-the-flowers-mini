@@ -50,6 +50,9 @@ extern "C" inline time_t timegm(struct tm* tm_buf) {
 // MUST be included LAST: depends on WateringController + Settings + OverflowSensor
 // declarations, and reads the file-scope globals defined below via extern.
 #include "MetricsPusher.h"
+// FirmwareUpdater depends on MetricsPusher (reads successfulMetricsPushes) and
+// WateringController (watering-gating check). Include after MetricsPusher.
+#include "FirmwareUpdater.h"
 
 // ---------------------------------------------------------------------------
 // Single definitions for globals declared `extern` in include/config.h.
@@ -101,6 +104,16 @@ time_t ArduinoHal::unixNow() { return DS3231RTC::getTime(); }
 // Cross-core alert: copy the message onto the heap and stash a pointer in the
 // queue. If the queue is full or strdup fails we silently drop — no Telegram
 // is fine, motor safety is not.
+// Thin shims from TelegramNotifier's processCommand into FirmwareUpdater.
+// Declared `extern` in TelegramNotifier.h so the header doesn't have to pull
+// FirmwareUpdater's hardware-bound include chain.
+void otaCheckAndApplyExt(bool force) {
+    FirmwareUpdater::checkAndApply(force);
+}
+void otaRollbackExt() {
+    FirmwareUpdater::rollbackToOtherPartition();
+}
+
 void queueTelegramNotification(const String& msg) {
     if (!notificationQueue) return;
     char* copy = strdup(msg.c_str());
@@ -249,6 +262,9 @@ void networkTask(void* /*pvParameters*/) {
             if (!boot_banner_sent) {
                 queueTelegramNotification(
                     TelegramNotifier::formatBootBanner(FIRMWARE_VERSION, WiFi.localIP().toString()));
+                // If handleBootTrial detected a RolledBack state, drain the
+                // parked notice now that the queue is alive.
+                FirmwareUpdater::sendDeferredBootNoticeIfAny();
                 boot_banner_sent = true;
             }
 
@@ -263,6 +279,9 @@ void networkTask(void* /*pvParameters*/) {
             processPendingNotifications();
             DebugHelper::loop();
             MetricsPusher::loop();
+            // Tick OTA health check: if a trial boot is in progress, mark
+            // the new firmware valid once a metrics push has succeeded.
+            FirmwareUpdater::loopHealthCheck();
             TelegramNotifier::ensureBotCommandsRegistered();   // idempotent retry
         }
 
@@ -313,6 +332,18 @@ void setup() {
     if (!LittleFS.begin(true)) {
         Serial.println("[mini] LittleFS mount failed");
     }
+
+    // ----- OTA trial-boot detection -----
+    // Reads NVS namespace "ota" set by a previous FirmwareUpdater::checkAndApply.
+    // - NoTrial branch: no-op.
+    // - NewBoot branch: arms a health-check timer; loopHealthCheck() will mark
+    //   the new firmware valid once a metrics push succeeds.
+    // - PendingRollback branch: flips boot partition and ESP.restart()s here.
+    // - RolledBack branch: stashes a "vX failed health check" message that
+    //   networkTask's first-WiFi-up branch will queue to Telegram.
+    // Must run BEFORE the notification queue is created, since any
+    // queueTelegramNotification call here would silently no-op.
+    FirmwareUpdater::handleBootTrial();
 
     // ----- Device identity (Telegram bot token + chat_id) -----
     // Resolves once, caches in DeviceToken's static storage. Order matters:

@@ -23,6 +23,8 @@ extern OverflowSensor*      g_overflow_ptr;
 extern bool saveSettings(const Settings&);
 extern bool persistState();
 extern void recomputeNextRun();
+extern void otaCheckAndApplyExt(bool force);
+extern void otaRollbackExt();
 
 namespace ApiHandlers {
 
@@ -114,6 +116,28 @@ inline void api_resume() {
     if (!_bootReady()) { _send503(); return; }
     g_controller_ptr->resume();
     httpServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// Trigger FirmwareUpdater::checkAndApply. Identical behaviour to Telegram
+// /check_update; reply 202 immediately and let the OTA proceed asynchronously
+// via the notification queue (download itself blocks Core 0 while it streams).
+// Optional `?force=1` re-flashes even at same version.
+inline void api_check_update() {
+    bool force = false;
+    if (httpServer.hasArg("force")) {
+        String v = httpServer.arg("force");
+        force = (v == "1" || v == "true" || v == "yes");
+    }
+    httpServer.send(202, "application/json",
+        String("{\"ok\":true,\"force\":") + (force ? "true" : "false") + "}");
+    otaCheckAndApplyExt(force);
+}
+
+// Trigger FirmwareUpdater::rollbackToOtherPartition. Same effect as Telegram
+// /rollback. Replies 202 then reboots into the other partition shortly after.
+inline void api_rollback() {
+    httpServer.send(202, "application/json", "{\"ok\":true}");
+    otaRollbackExt();
 }
 
 inline void api_reset_overflow() {
@@ -262,6 +286,8 @@ inline void registerApiHandlers() {
     httpServer.on("/api/device_config",       HTTP_GET,    ApiHandlers::api_device_config_get);
     httpServer.on("/api/device_config",       HTTP_POST,   ApiHandlers::api_device_config_post);
     httpServer.on("/api/device_config/reset", HTTP_POST,   ApiHandlers::api_device_config_reset);
+    httpServer.on("/api/check_update",         HTTP_POST,   ApiHandlers::api_check_update);
+    httpServer.on("/api/rollback",             HTTP_POST,   ApiHandlers::api_rollback);
 }
 
 #endif // API_HANDLERS_H

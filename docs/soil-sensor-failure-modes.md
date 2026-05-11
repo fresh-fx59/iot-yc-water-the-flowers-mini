@@ -35,7 +35,7 @@ For this project, a silent sensor failure is the worst kind of failure. The sche
 **How to detect it in this firmware.**
 
 - After running `/calibrate_dry` and `/calibrate_wet` you may *get* a plausible dry-wet spread (1000+ counts), but `/test_sensor` on a probe that has just been moved from dry to wet will show the wet reading drift slowly upward toward the dry value over a minute, instead of immediately reflecting wet.
-- During a real watering cycle, the `tick()` reads soil every 10 ms. If R4 is open, the value the SM sees is whatever the AOUT line was electrically coupled to one tick ago — not what the soil moisture actually is. This shows up in Grafana (or in the `metrics_pushed` JSON, `soil_raw`) as a soil trace that does not drop fast enough during watering, so the cycle either keeps pumping until `max_runtime_sec` Timeout fires, or `CompletedWet` triggers spuriously.
+- During a real watering cycle, the `tick()` reads soil every 10 ms. If R4 is open, the value the SM sees is whatever the AOUT line was electrically coupled to one tick ago — not what the soil moisture actually is. This shows up in Grafana (or in the metrics-push JSON, field `soil_raw`) as a soil trace that does not drop fast enough during watering, so the cycle either keeps pumping until `max_runtime_sec` Timeout fires, or `CompletedWet` triggers spuriously.
 
 **What to do.** A 1 MΩ through-hole or SMD resistor soldered from the AOUT pin header to the GND pin header is a permanent fix ([arduinodiy.wordpress.com](https://arduinodiy.wordpress.com/2020/08/24/soil-moisture-sensors/)). If you do not want to rework the board, swap it.
 

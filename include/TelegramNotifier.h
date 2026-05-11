@@ -29,6 +29,11 @@ extern Settings*           g_settings_ptr;
 extern OverflowSensor*     g_overflow_ptr;
 extern void                queueTelegramNotification(const String& message);
 extern void                recomputeNextRun();
+// Firmware update hooks — implemented in src/main.cpp as thin shims into
+// FirmwareUpdater. The shim keeps TelegramNotifier.h free of the
+// HTTPClient/Update.h/esp_ota_* header dependency chain.
+extern void                otaCheckAndApplyExt(bool force);
+extern void                otaRollbackExt();
 
 // ============================================
 // Telegram Notifier Class
@@ -158,6 +163,8 @@ private:
             "{\"command\":\"calibrate_dry\",\"description\":\"Calibrate dry soil reading\"},"
             "{\"command\":\"test_motor\",\"description\":\"Pulse motor for N seconds\"},"
             "{\"command\":\"test_sensor\",\"description\":\"Print current soil reading\"},"
+            "{\"command\":\"check_update\",\"description\":\"Pull firmware manifest; apply if newer (or 'force')\"},"
+            "{\"command\":\"rollback\",\"description\":\"Reboot into the other firmware partition\"},"
             "{\"command\":\"set_token\",\"description\":\"Repoint device to a different bot (DESTRUCTIVE)\"},"
             "{\"command\":\"factory_reset_telegram\",\"description\":\"Erase bot config; revert to secret.h default (DESTRUCTIVE)\"}"
             "]"
@@ -400,6 +407,10 @@ public:
         h += "\n<b>Diagnostics</b>\n";
         h += "/test_motor &lt;sec&gt; - pulse motor 1..10s\n";
         h += "/test_sensor - print soil raw value\n";
+        h += "\n<b>Firmware</b>\n";
+        h += "/check_update - pull manifest; apply if newer\n";
+        h += "/check_update force - re-flash even at same version\n";
+        h += "/rollback - boot the other firmware partition\n";
         h += "\n<b>Identity (DESTRUCTIVE)</b>\n";
         h += "/set_token &lt;bot_token&gt; - repoint device to a different bot; reboots\n";
         h += "/factory_reset_telegram - erase /device_config.json; reboots to secret.h defaults\n";
@@ -727,6 +738,14 @@ public:
         sendMessage("Resumed.");
     }
 
+    static void handleCheckUpdate(bool force) {
+        otaCheckAndApplyExt(force);
+    }
+
+    static void handleRollback() {
+        otaRollbackExt();
+    }
+
     static void handleStop() {
         if (!g_controller_ptr) { sendMessage("Boot incomplete."); return; }
         WateringEvent ev = g_controller_ptr->abort();
@@ -975,6 +994,9 @@ public:
         if (text.startsWith("/set_runtime "))   { handleSetRuntime(text);   return; }
         if (text.startsWith("/set_threshold ")) { handleSetThreshold(text); return; }
         if (text.startsWith("/test_motor "))    { handleTestMotor(text);    return; }
+        if (text == "/check_update")            { handleCheckUpdate(false); return; }
+        if (text == "/check_update force")      { handleCheckUpdate(true);  return; }
+        if (text == "/rollback")                { handleRollback();         return; }
 
         sendMessage("Unknown command - try /help");
     }

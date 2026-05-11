@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <secret.h>
 
-#define FIRMWARE_VERSION "1.1.1"
+#define FIRMWARE_VERSION "1.2.0"
 
 // GPIO (TODO: confirm against YD-ESP32-23 v1.3 silkscreen before flashing)
 #define MOTOR_RELAY_PIN          5
@@ -135,5 +135,13 @@ static const long RTC_TIMEZONE_OFFSET_SEC = 3 * 3600;
 // OTA Configuration (ota.h)
 // ============================================
 #define OTA_HOSTNAME "esp32-watering-mini"
+
+// ============================================
+// Remote OTA (FirmwareUpdater.h)
+// ============================================
+static const unsigned long OTA_MANIFEST_HTTP_TIMEOUT_MS = 5000UL;
+static const unsigned long OTA_DOWNLOAD_HTTP_TIMEOUT_MS = 30000UL;
+static const unsigned long OTA_HEALTH_DEADLINE_MS       = 5UL * 60UL * 1000UL;
+static const size_t        OTA_DOWNLOAD_CHUNK_BYTES     = 1024;
 
 #endif

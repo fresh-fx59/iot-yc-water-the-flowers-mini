@@ -45,3 +45,9 @@ logs/
 
 # idea
 .idea
+
+# OTA hardware test state — transient binaries that embed bot tokens; never commit
+tools/ota_test_state/
+
+# Claude Code worktree / runtime state
+.claude/
