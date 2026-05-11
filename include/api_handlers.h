@@ -195,13 +195,19 @@ inline void api_test_motor() {
 // GET /api/device_config — never returns the raw token. Preview is the last 5
 // chars only (enough to disambiguate two bots, not enough to leak credentials).
 inline void api_device_config_get() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     doc["configured"]        = DeviceToken::isConfigured();
     doc["label"]             = DeviceToken::label();
     doc["bot_token_preview"] = DeviceToken::tokenPreview();
     doc["chat_id"]           = DeviceToken::chatId();
     doc["set_by"]            = DeviceToken::setBy();
     doc["set_unix"]          = (long)DeviceToken::setUnix();
+    // Network identity surface: static_ip from secret.h (empty = DHCP) and
+    // the actually-assigned localIP. They should match when static IP works
+    // and the DHCP server isn't overriding; a mismatch suggests WiFi.config
+    // failed or the router ignored it.
+    doc["static_ip"]         = DeviceToken::staticIp();
+    doc["actual_ip"]         = WiFi.localIP().toString();
     String out; serializeJson(doc, out);
     httpServer.send(200, "application/json", out);
 }

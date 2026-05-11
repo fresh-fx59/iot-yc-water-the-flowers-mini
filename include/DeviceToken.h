@@ -36,22 +36,24 @@ static const char* CONFIG_FILE = "/device_config.json";
 // Storage for resolved values. inline static so the header can be included
 // from multiple TUs without violating ODR. cached_chat_id() lives alongside
 // cached_token() for symmetry — both populated by init().
-inline String& cachedToken()   { static String t; return t; }
-inline String& cachedChatId()  { static String t; return t; }
-inline String& cachedLabel()   { static String t; return t; }   // diagnostics only
-inline String& cachedSetBy()   { static String t; return t; }   // "bootstrap"|"api"|"telegram"|"fallback"
-inline time_t& cachedSetUnix() { static time_t t = 0; return t; }
-inline bool&   cachedReady()   { static bool b = false; return b; }
+inline String& cachedToken()    { static String t; return t; }
+inline String& cachedChatId()   { static String t; return t; }
+inline String& cachedLabel()    { static String t; return t; }   // diagnostics only
+inline String& cachedSetBy()    { static String t; return t; }   // "bootstrap"|"api"|"telegram"|"fallback"
+inline time_t& cachedSetUnix()  { static time_t t = 0; return t; }
+inline bool&   cachedReady()    { static bool b = false; return b; }
+inline String& cachedStaticIp() { static String t; return t; }   // empty = use DHCP
 
 // Forward decl — implementations follow.
 inline bool _writeConfig(const String& bot_token, const String& chat_id,
                          const char* set_by);
 
 // ------------------------------------------------------------------ accessors
-inline const char* token()        { return cachedToken().c_str();   }
-inline const char* chatId()       { return cachedChatId().c_str();  }
-inline const char* label()        { return cachedLabel().c_str();   }
-inline const char* setBy()        { return cachedSetBy().c_str();   }
+inline const char* token()        { return cachedToken().c_str();    }
+inline const char* chatId()       { return cachedChatId().c_str();   }
+inline const char* label()        { return cachedLabel().c_str();    }
+inline const char* setBy()        { return cachedSetBy().c_str();    }
+inline const char* staticIp()     { return cachedStaticIp().c_str(); }
 inline time_t      setUnix()      { return cachedSetUnix(); }
 inline bool        isConfigured() { return cachedToken().length() > 10
                                         && cachedChatId().length() > 0; }
@@ -73,6 +75,24 @@ inline String tokenPreview() {
 // will boot silently w.r.t. Telegram; web UI + watering loop still work.
 inline bool init() {
 #ifndef NATIVE_TEST
+    // ----- Always-resolve identity from MAC table -----
+    // label and static_ip live ONLY in secret.h (compile-time); they're
+    // not persisted in /device_config.json. So we look up the MAC every
+    // boot and cache both fields regardless of whether the token came
+    // from Step 1 (persisted) or Step 2 (bootstrap). This also fixes
+    // the v1.1.0 quirk where label became "persisted" on subsequent
+    // boots — now it stays at the secret.h label.
+    String mac = WiFi.macAddress();   // upper-case "AA:BB:CC:DD:EE:FF"
+    const DeviceTokenEntry* matched = nullptr;
+    for (size_t i = 0; i < DEVICE_TOKEN_COUNT; ++i) {
+        if (mac.equalsIgnoreCase(DEVICE_TOKENS[i].mac)) {
+            matched = &DEVICE_TOKENS[i];
+            cachedLabel()    = String(matched->label);
+            cachedStaticIp() = String(matched->static_ip ? matched->static_ip : "");
+            break;
+        }
+    }
+
     // ----- Step 1: try persisted config -----
     if (LittleFS.exists(CONFIG_FILE)) {
         File f = LittleFS.open(CONFIG_FILE, "r");
@@ -88,7 +108,7 @@ inline bool init() {
                                   ? String((const char*)doc["set_by"]) : String("api");
                 cachedSetUnix() = doc.containsKey("set_unix")
                                   ? (time_t)(long)doc["set_unix"] : 0;
-                cachedLabel()   = String("persisted");
+                if (cachedLabel().length() == 0) cachedLabel() = String("persisted");
                 cachedReady()   = true;
                 Serial.printf("[device-token] loaded from LittleFS (%s, %s)\n",
                               cachedSetBy().c_str(), tokenPreview().c_str());
@@ -103,24 +123,18 @@ inline bool init() {
     }
 
     // ----- Step 2: bootstrap from secret.h's DEVICE_TOKENS[] table -----
-    // secret.h always defines DEVICE_TOKENS[] in v1.1.0+ — no #ifdef guard
-    // needed. (Previously had #ifdef DEVICE_TOKEN_COUNT which was always
-    // false because DEVICE_TOKEN_COUNT is a `static const`, not a #define.)
-    String mac = WiFi.macAddress();   // upper-case "AA:BB:CC:DD:EE:FF"
-    for (size_t i = 0; i < DEVICE_TOKEN_COUNT; ++i) {
-        if (mac.equalsIgnoreCase(DEVICE_TOKENS[i].mac)) {
-            cachedToken()  = String(DEVICE_TOKENS[i].bot_token);
-            cachedChatId() = String(TELEGRAM_CHAT_ID);   // shared across fleet
-            cachedLabel()  = String(DEVICE_TOKENS[i].label);
-            cachedSetBy()  = String("bootstrap");
-            cachedSetUnix() = 0;   // RTC may not be authoritative yet
-            cachedReady()  = true;
-            _writeConfig(cachedToken(), cachedChatId(), "bootstrap");
-            Serial.printf("[device-token] bootstrapped from MAC %s → %s (%s)\n",
-                          mac.c_str(), DEVICE_TOKENS[i].label,
-                          tokenPreview().c_str());
-            return true;
-        }
+    // `matched` was found by the always-resolve block at the top; reuse it
+    // so we don't walk the table twice.
+    if (matched != nullptr) {
+        cachedToken()   = String(matched->bot_token);
+        cachedChatId()  = String(TELEGRAM_CHAT_ID);   // shared across fleet
+        cachedSetBy()   = String("bootstrap");
+        cachedSetUnix() = 0;                          // RTC may not be authoritative yet
+        cachedReady()   = true;
+        _writeConfig(cachedToken(), cachedChatId(), "bootstrap");
+        Serial.printf("[device-token] bootstrapped from MAC %s → %s (%s)\n",
+                      mac.c_str(), matched->label, tokenPreview().c_str());
+        return true;
     }
     Serial.printf("[device-token] MAC %s not in DEVICE_TOKENS[] — falling back\n",
                   mac.c_str());

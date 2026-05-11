@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <secret.h>
 
-#define FIRMWARE_VERSION "1.1.0"
+#define FIRMWARE_VERSION "1.1.1"
 
 // GPIO (TODO: confirm against YD-ESP32-23 v1.3 silkscreen before flashing)
 #define MOTOR_RELAY_PIN          5

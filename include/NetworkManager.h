@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include "config.h"
 #include "DebugHelper.h"
+#include "DeviceToken.h"
 
 // Forward declaration — single-zone controller lands in Phase 6.
 class WateringController;
@@ -36,6 +37,30 @@ public:
     static void connectWiFi() {
         DebugHelper::debug("Connecting to WiFi: " + DebugHelper::maskCredential(String(SSID)));
         WiFi.mode(WIFI_STA);
+
+        // Static IP (per-device, from DEVICE_TOKENS[] in secret.h, resolved
+        // by DeviceToken::init() before this runs). Convention: derive
+        // gateway as X.X.X.1 and subnet as /24 — covers home setups; if you
+        // ever need a non-/24, extend DeviceTokenEntry with explicit fields.
+        // Empty staticIp() => DHCP (legacy behavior).
+        const char* ip_str = DeviceToken::staticIp();
+        if (ip_str && strlen(ip_str) > 0) {
+            IPAddress local;
+            if (local.fromString(ip_str)) {
+                IPAddress gateway(local[0], local[1], local[2], 1);
+                IPAddress subnet(255, 255, 255, 0);
+                IPAddress dns = gateway;
+                if (WiFi.config(local, gateway, subnet, dns)) {
+                    DebugHelper::debug("[wifi] static IP " + String(ip_str) +
+                                       " gw=" + gateway.toString());
+                } else {
+                    DebugHelper::debugImportant("[wifi] WiFi.config() rejected static IP " + String(ip_str));
+                }
+            } else {
+                DebugHelper::debugImportant("[wifi] static_ip '" + String(ip_str) + "' is not a valid IPv4 — falling back to DHCP");
+            }
+        }
+
         WiFi.begin(SSID, SSID_PASSWORD);
 
         int attempts = 0;
