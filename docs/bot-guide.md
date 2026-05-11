@@ -49,8 +49,8 @@ the bot says "must be 1..30 days", that exact range is enforced in code.
 
 | Command | Range | What it does |
 |---|---|---|
-| `/set_interval <days>` | 1..30 | Days between scheduled cycles. Default 1. |
-| `/set_time HH:MM` | 00:00..23:59 | Local time of day for the daily check. |
+| `/set_interval <days>` | 1..30 | Days between scheduled cycles. Default 4 (`DEFAULT_INTERVAL_DAYS`). |
+| `/set_time HH:MM` | 00:00..23:59 | UTC time of day for the daily check. System TZ is pinned to UTC0; use UTC values throughout. |
 | `/set_runtime <sec>` | 10..600 | Maximum motor on-time per cycle. The cycle stops as soon as soil reads wet, OR at this hard cap. |
 | `/set_threshold <raw>` | 0..4095 | Soil raw ADC value below which the soil counts as "wet". Lower = wetter. |
 | `/calibrate_wet` | - | Take an averaged soil reading right now, store it as `calibration_wet`, recompute threshold as the midpoint of wet+dry. |
