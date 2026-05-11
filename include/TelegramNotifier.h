@@ -146,10 +146,9 @@ private:
             "{\"command\":\"halt\",\"description\":\"Block all watering\"},"
             "{\"command\":\"resume\",\"description\":\"Re-enable watering\"},"
             "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow latch\"},"
-            "{\"command\":\"overflow_status\",\"description\":\"Show overflow sensor state\"},"
             "{\"command\":\"reinit_gpio\",\"description\":\"Re-init motor and overflow pins\"},"
-            "{\"command\":\"time\",\"description\":\"Show RTC time\"},"
-            "{\"command\":\"settime\",\"description\":\"Set RTC time YYYY-MM-DD HH:MM:SS\"},"
+            "{\"command\":\"time\",\"description\":\"Show RTC time (UTC)\"},"
+            "{\"command\":\"settime\",\"description\":\"Sync RTC from NTP (no arg) or set manually\"},"
             "{\"command\":\"set_interval\",\"description\":\"Set watering interval (days)\"},"
             "{\"command\":\"set_time\",\"description\":\"Set schedule HH:MM\"},"
             "{\"command\":\"set_runtime\",\"description\":\"Set max runtime (sec)\"},"
@@ -376,7 +375,6 @@ public:
         h += "/halt - block all watering\n";
         h += "/resume - re-enable watering\n";
         h += "/reset_overflow - clear overflow latch\n";
-        h += "/overflow_status - show overflow sensor state\n";
         h += "/reinit_gpio - re-init motor and overflow pins\n";
         h += "\n<b>Settings</b>\n";
         h += "/set_interval &lt;days&gt; - 1..30\n";
@@ -395,16 +393,22 @@ public:
         return h;
     }
 
-    // Inline keyboard for /menu — 4-button quick panel.
+    // Inline keyboard for /menu — 7-button quick panel, two columns where
+    // possible. Emojis are deliberate: at a Telegram-glance the icons
+    // separate "do something" buttons (Water/Stop) from "view state" buttons
+    // (Status/Time) and "block/unblock" buttons (Halt/Resume). The bottom
+    // row exposes the v1.0.6 NTP sync; replaced the "Help" button, which
+    // was redundant because the help text is already shown above the menu.
     static String getMainMenuKeyboard() {
         return String(
             "{\"inline_keyboard\":["
-            "[{\"text\":\"Water\",\"callback_data\":\"/water\"},"
-            "{\"text\":\"Stop\",\"callback_data\":\"/stop\"}],"
-            "[{\"text\":\"Status\",\"callback_data\":\"/status\"},"
-            "{\"text\":\"Halt\",\"callback_data\":\"/halt\"}],"
-            "[{\"text\":\"Resume\",\"callback_data\":\"/resume\"},"
-            "{\"text\":\"Help\",\"callback_data\":\"/help\"}]"
+            "[{\"text\":\"\xF0\x9F\x92\xA7 Water\",\"callback_data\":\"/water\"},"
+            "{\"text\":\"\xE2\x8F\xB9 Stop\",\"callback_data\":\"/stop\"}],"
+            "[{\"text\":\"\xF0\x9F\x93\x8A Status\",\"callback_data\":\"/status\"},"
+            "{\"text\":\"\xF0\x9F\x95\x90 Time\",\"callback_data\":\"/time\"}],"
+            "[{\"text\":\"\xE2\x8F\xB8 Halt\",\"callback_data\":\"/halt\"},"
+            "{\"text\":\"\xE2\x96\xB6 Resume\",\"callback_data\":\"/resume\"}],"
+            "[{\"text\":\"\xE2\x8F\xB0 Sync RTC (NTP)\",\"callback_data\":\"/settime\"}]"
             "]}"
         );
     }
@@ -561,11 +565,18 @@ public:
     static String formatStatus() {
         String s;
 
+        // Time — at the top so the user can see "is the RTC sane?" at a
+        // glance before reading anything else. UTC because the system TZ
+        // is pinned to UTC0 (main.cpp:285).
+        s += "time=";
+        s += formatRtcTime();
+        s += " UTC";
+
         // State + motor
         if (g_controller_ptr) {
             const bool watering =
                 g_controller_ptr->state() == WateringState::WATERING;
-            s += "state=";
+            s += "\nstate=";
             s += watering ? "WATERING" : "IDLE";
             s += "\nmotor=";
             s += watering ? "on" : "off";
@@ -578,7 +589,7 @@ public:
             s += "\nnext_run_unix=";
             s += String((long)g_controller_ptr->nextRunUnix());
         } else {
-            s += "controller=unavailable";
+            s += "\ncontroller=unavailable";
         }
 
         // Soil reading + threshold
@@ -598,12 +609,16 @@ public:
             }
         }
 
-        // Overflow
+        // Overflow — `overflow_raw` is the live pin level (1=dry, 0=wet);
+        // included here so users don't need /overflow_status as a separate
+        // command. /overflow_status was removed in v1.0.7.
         if (g_overflow_ptr) {
             s += "\noverflow_latched=";
             s += g_overflow_ptr->latched() ? "yes" : "no";
             s += "\noverflow_streak=";
             s += String(g_overflow_ptr->triggerStreak());
+            s += "\noverflow_raw=";
+            s += String(digitalRead(OVERFLOW_SENSOR_DO_PIN));
         }
 
         return s;
@@ -708,16 +723,6 @@ public:
         g_controller_ptr->setOverflowLatched(false);
         g_overflow_ptr->reset();
         sendMessage(formatOverflowReset());
-    }
-
-    static void handleOverflowStatus() {
-        if (!g_overflow_ptr) { sendMessage("Boot incomplete."); return; }
-        int streak = g_overflow_ptr->triggerStreak();
-        int raw = digitalRead(OVERFLOW_SENSOR_DO_PIN);
-        bool latched = g_overflow_ptr->latched();
-        sendMessage(String("overflow latched=") + (latched ? "yes" : "no") +
-                    " streak=" + String(streak) +
-                    " raw=" + String(raw));
     }
 
     static void handleReinitGpio() {
@@ -902,7 +907,6 @@ public:
             return;
         }
         if (text == "/reset_overflow")  { handleResetOverflow();  return; }
-        if (text == "/overflow_status") { handleOverflowStatus(); return; }
         if (text == "/reinit_gpio")     { handleReinitGpio();     return; }
         if (text == "/time")            { handleTime();           return; }
         if (text == "/calibrate_wet")   { handleCalibrate(true);  return; }
