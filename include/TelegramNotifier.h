@@ -10,6 +10,7 @@
 #include "secret.h"
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
+#include "NtpHelper.h"
 #include "MoistureSensor.h"
 #include "Settings.h"
 #include "WateringController.h"
@@ -26,6 +27,7 @@ extern WateringController* g_controller_ptr;
 extern Settings*           g_settings_ptr;
 extern OverflowSensor*     g_overflow_ptr;
 extern void                queueTelegramNotification(const String& message);
+extern void                recomputeNextRun();
 
 // ============================================
 // Telegram Notifier Class
@@ -385,7 +387,8 @@ public:
         h += "/calibrate_dry - capture dry soil reading\n";
         h += "\n<b>Time</b>\n";
         h += "/time - show RTC time\n";
-        h += "/settime [YYYY-MM-DD HH:MM:SS] - set RTC time\n";
+        h += "/settime - sync RTC from NTP (ru.pool.ntp.org)\n";
+        h += "/settime YYYY-MM-DD HH:MM:SS - set RTC manually (UTC)\n";
         h += "\n<b>Diagnostics</b>\n";
         h += "/test_motor &lt;sec&gt; - pulse motor 1..10s\n";
         h += "/test_sensor - print soil raw value\n";
@@ -729,15 +732,32 @@ public:
     }
 
     static void handleSetTime(const String& text) {
-        // Accept either "/settime" (no arg = report current) or
-        // "/settime YYYY-MM-DD HH:MM:SS".
+        // Three modes:
+        //   /settime                      — sync RTC from NTP (ru.pool.ntp.org)
+        //   /settime YYYY-MM-DD HH:MM:SS  — set RTC from the explicit UTC value
+        //   /settime (NTP failed)         — falls back to printing current + usage
         String arg = text;
         int sp = arg.indexOf(' ');
+
         if (sp < 0) {
-            sendMessage(String("RTC time: ") + formatRtcTime() +
-                        "\nUsage: /settime YYYY-MM-DD HH:MM:SS");
+            // No-arg path: attempt NTP sync. Blocking up to ~8s.
+            sendMessage("Syncing RTC from ru.pool.ntp.org...");
+            time_t synced = NtpHelper::syncFromPool("ru.pool.ntp.org",
+                                                    "pool.ntp.org",
+                                                    8000);
+            if (synced > 0) {
+                struct timeval tv{ synced, 0 };
+                settimeofday(&tv, nullptr);
+                if (g_controller_ptr) recomputeNextRun();
+                sendMessage(String("RTC synced from NTP: ") + formatRtcTime());
+            } else {
+                sendMessage(String("NTP sync failed (WiFi down or pool unreachable).\n") +
+                            "Current RTC time: " + formatRtcTime() +
+                            "\nManual usage: /settime YYYY-MM-DD HH:MM:SS");
+            }
             return;
         }
+
         arg = arg.substring(sp + 1);
         arg.trim();
         time_t parsed;
@@ -746,9 +766,9 @@ public:
             return;
         }
         DS3231RTC::setTime(parsed);
-        // Also align ESP32 system clock so reads via time() match.
         struct timeval tv{ parsed, 0 };
         settimeofday(&tv, nullptr);
+        if (g_controller_ptr) recomputeNextRun();
         sendMessage(String("RTC set to ") + formatRtcTime());
     }
 
