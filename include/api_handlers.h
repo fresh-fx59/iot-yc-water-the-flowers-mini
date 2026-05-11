@@ -10,6 +10,7 @@
 #include "OverflowSensor.h"
 #include "WateringController.h"
 #include "DS3231RTC.h"
+#include "DeviceToken.h"
 
 class WateringController;
 struct Settings;
@@ -191,6 +192,53 @@ inline void api_test_motor() {
     httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 
+// GET /api/device_config — never returns the raw token. Preview is the last 5
+// chars only (enough to disambiguate two bots, not enough to leak credentials).
+inline void api_device_config_get() {
+    StaticJsonDocument<256> doc;
+    doc["configured"]        = DeviceToken::isConfigured();
+    doc["label"]             = DeviceToken::label();
+    doc["bot_token_preview"] = DeviceToken::tokenPreview();
+    doc["chat_id"]           = DeviceToken::chatId();
+    doc["set_by"]            = DeviceToken::setBy();
+    doc["set_unix"]          = (long)DeviceToken::setUnix();
+    String out; serializeJson(doc, out);
+    httpServer.send(200, "application/json", out);
+}
+
+// POST /api/device_config  body: {"bot_token":"...", "chat_id":"..."}
+// On success: writes the persisted file, replies 200, then reboots so
+// TelegramNotifier picks up the new token. delay(1000) before restart
+// lets the HTTP response flush.
+inline void api_device_config_post() {
+    String body = httpServer.arg("plain");
+    StaticJsonDocument<512> in;
+    if (deserializeJson(in, body)) { _send400("invalid_json"); return; }
+    if (!in.containsKey("bot_token") || !in.containsKey("chat_id")) {
+        _send400("missing bot_token or chat_id"); return;
+    }
+    String tok  = String((const char*)in["bot_token"]);
+    String chat = String((const char*)in["chat_id"]);
+    if (!DeviceToken::overwrite(tok, chat, "api")) {
+        _send400("token validation failed (>=30 chars + contains ':')");
+        return;
+    }
+    httpServer.send(200, "application/json",
+                    "{\"ok\":true,\"note\":\"rebooting in 1s\"}");
+    delay(1000);
+    ESP.restart();
+}
+
+// POST /api/device_config/reset — erase persisted config; reboot so the
+// next boot re-bootstraps from secret.h's DEVICE_TOKENS[] table.
+inline void api_device_config_reset() {
+    if (!DeviceToken::reset()) { _send400("reset failed"); return; }
+    httpServer.send(200, "application/json",
+                    "{\"ok\":true,\"note\":\"rebooting in 1s\"}");
+    delay(1000);
+    ESP.restart();
+}
+
 } // namespace ApiHandlers
 
 inline void registerApiHandlers() {
@@ -205,6 +253,9 @@ inline void registerApiHandlers() {
     httpServer.on("/api/calibrate",       HTTP_POST, ApiHandlers::api_calibrate);
     httpServer.on("/api/test_sensor",     HTTP_GET,  ApiHandlers::api_test_sensor);
     httpServer.on("/api/test_motor",      HTTP_POST, ApiHandlers::api_test_motor);
+    httpServer.on("/api/device_config",       HTTP_GET,    ApiHandlers::api_device_config_get);
+    httpServer.on("/api/device_config",       HTTP_POST,   ApiHandlers::api_device_config_post);
+    httpServer.on("/api/device_config/reset", HTTP_POST,   ApiHandlers::api_device_config_reset);
 }
 
 #endif // API_HANDLERS_H

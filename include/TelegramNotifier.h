@@ -10,6 +10,7 @@
 #include "secret.h"
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
+#include "DeviceToken.h"
 #include "NtpHelper.h"
 #include "MoistureSensor.h"
 #include "Settings.h"
@@ -156,7 +157,9 @@ private:
             "{\"command\":\"calibrate_wet\",\"description\":\"Calibrate wet soil reading\"},"
             "{\"command\":\"calibrate_dry\",\"description\":\"Calibrate dry soil reading\"},"
             "{\"command\":\"test_motor\",\"description\":\"Pulse motor for N seconds\"},"
-            "{\"command\":\"test_sensor\",\"description\":\"Print current soil reading\"}"
+            "{\"command\":\"test_sensor\",\"description\":\"Print current soil reading\"},"
+            "{\"command\":\"set_token\",\"description\":\"Repoint device to a different bot (DESTRUCTIVE)\"},"
+            "{\"command\":\"factory_reset_telegram\",\"description\":\"Erase bot config; revert to secret.h default (DESTRUCTIVE)\"}"
             "]"
         );
     }
@@ -193,6 +196,10 @@ private:
     }
 
     static bool sendMessage(const String& message, const String& replyMarkup = "") {
+        if (!DeviceToken::isConfigured()) {
+            logTransportLocalOnly("Cannot send Telegram: no bot token configured");
+            return false;
+        }
         if (!WiFi.isConnected()) {
             logTransportLocalOnly("Cannot send Telegram: WiFi not connected");
             return false;
@@ -216,8 +223,8 @@ private:
             }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
             applyProxyAuthHeader(http);
-            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
-                          "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
+            String body = "bot_token=" + urlEncode(String(DeviceToken::token())) +
+                          "&chat_id=" + urlEncode(String(DeviceToken::chatId())) +
                           "&text=" + urlEncode(message) +
                           "&parse_mode=HTML";
             if (replyMarkup.length() > 0) {
@@ -226,8 +233,8 @@ private:
             http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.POST(body);
         } else {
-            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                         "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+            String url = String("https://api.telegram.org/bot") + DeviceToken::token() +
+                         "/sendMessage?chat_id=" + String(DeviceToken::chatId()) +
                          "&text=" + urlEncode(message) +
                          "&parse_mode=HTML";
             if (replyMarkup.length() > 0) {
@@ -303,6 +310,9 @@ public:
     // Send a watering notification with its own independent cooldown.
     // Debug/command failures won't block notification delivery.
     static bool sendNotificationMessage(const String& message) {
+        if (!DeviceToken::isConfigured()) {
+            return false;
+        }
         if (!WiFi.isConnected()) {
             return false;
         }
@@ -325,15 +335,15 @@ public:
             }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
             applyProxyAuthHeader(http);
-            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
-                          "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
+            String body = "bot_token=" + urlEncode(String(DeviceToken::token())) +
+                          "&chat_id=" + urlEncode(String(DeviceToken::chatId())) +
                           "&text=" + urlEncode(message) +
                           "&parse_mode=HTML";
             http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.POST(body);
         } else {
-            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                         "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+            String url = String("https://api.telegram.org/bot") + DeviceToken::token() +
+                         "/sendMessage?chat_id=" + String(DeviceToken::chatId()) +
                          "&text=" + urlEncode(message) +
                          "&parse_mode=HTML";
 
@@ -390,6 +400,9 @@ public:
         h += "\n<b>Diagnostics</b>\n";
         h += "/test_motor &lt;sec&gt; - pulse motor 1..10s\n";
         h += "/test_sensor - print soil raw value\n";
+        h += "\n<b>Identity (DESTRUCTIVE)</b>\n";
+        h += "/set_token &lt;bot_token&gt; - repoint device to a different bot; reboots\n";
+        h += "/factory_reset_telegram - erase /device_config.json; reboots to secret.h defaults\n";
         return h;
     }
 
@@ -427,12 +440,12 @@ public:
             if (!beginHttpClient(http, url, client, plainClient)) { cbId = ""; return; }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
             applyProxyAuthHeader(http);
-            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+            String body = "bot_token=" + urlEncode(String(DeviceToken::token())) +
                           "&callback_query_id=" + urlEncode(cbId);
             http.setTimeout(httpTimeoutMs(usingProxy));
             http.POST(body);
         } else {
-            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+            String url = String("https://api.telegram.org/bot") + DeviceToken::token() +
                          "/answerCallbackQuery?callback_query_id=" + urlEncode(cbId);
             if (!beginHttpClient(http, url, client, plainClient)) { cbId = ""; return; }
             http.setTimeout(httpTimeoutMs(usingProxy));
@@ -448,6 +461,7 @@ public:
     }
 
     static void ensureBotCommandsRegistered() {
+        if (!DeviceToken::isConfigured()) return;
         if (!WiFi.isConnected() || botCommandsConfigured()) {
             return;
         }
@@ -474,12 +488,12 @@ public:
 
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
             applyProxyAuthHeader(http);
-            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+            String body = "bot_token=" + urlEncode(String(DeviceToken::token())) +
                           "&commands=" + urlEncode(getBotCommandsJson());
             http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.POST(body);
         } else {
-            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+            String url = String("https://api.telegram.org/bot") + DeviceToken::token() +
                          "/setMyCommands";
             if (!beginHttpClient(http, url, client, plainClient)) {
                 logTransportLocalOnly("Telegram setMyCommands begin failed");
@@ -565,10 +579,18 @@ public:
     static String formatStatus() {
         String s;
 
-        // Time — at the top so the user can see "is the RTC sane?" at a
-        // glance before reading anything else. UTC because the system TZ
-        // is pinned to UTC0 (main.cpp:285).
-        s += "time=";
+        // Identity — which bot is this device talking to? Useful when
+        // the fleet has multiple devices on different bots.
+        s += "identity=";
+        s += DeviceToken::label();
+        s += "\nbot_token=";
+        s += DeviceToken::tokenPreview();
+        s += " (set_by=";
+        s += DeviceToken::setBy();
+        s += ")";
+
+        // Time — UTC because the system TZ is pinned to UTC0 (main.cpp:285).
+        s += "\ntime=";
         s += formatRtcTime();
         s += " UTC";
 
@@ -713,6 +735,36 @@ public:
         } else {
             sendMessage("No active cycle to stop.");
         }
+    }
+
+    static void handleSetToken(const String& text) {
+        const char* prefix = "/set_token ";
+        if (!text.startsWith(prefix)) {
+            sendMessage("Usage: /set_token &lt;bot_token&gt;");
+            return;
+        }
+        String token = text.substring(strlen(prefix));
+        token.trim();
+        String chatId = String(DeviceToken::chatId());   // preserve current
+        if (!DeviceToken::overwrite(token, chatId, "telegram")) {
+            sendMessage("Token rejected (must be >=30 chars and contain ':').");
+            return;
+        }
+        // Reply BEFORE rebooting so the old bot gets the final ack. The reboot
+        // happens 500ms later — enough for HTTP POST to flush.
+        sendMessage("Token updated. Rebooting on new bot in 1s...");
+        delay(1000);
+        ESP.restart();
+    }
+
+    static void handleFactoryResetTelegram() {
+        if (!DeviceToken::reset()) {
+            sendMessage("Reset failed (LittleFS write error).");
+            return;
+        }
+        sendMessage("Telegram config cleared. Rebooting; will re-bootstrap from secret.h.");
+        delay(1000);
+        ESP.restart();
     }
 
     static void handleResetOverflow() {
@@ -908,6 +960,8 @@ public:
         }
         if (text == "/reset_overflow")  { handleResetOverflow();  return; }
         if (text == "/reinit_gpio")     { handleReinitGpio();     return; }
+        if (text == "/factory_reset_telegram") { handleFactoryResetTelegram(); return; }
+        if (text.startsWith("/set_token "))    { handleSetToken(text);          return; }
         if (text == "/time")            { handleTime();           return; }
         if (text == "/calibrate_wet")   { handleCalibrate(true);  return; }
         if (text == "/calibrate_dry")   { handleCalibrate(false); return; }
@@ -929,7 +983,38 @@ public:
     // Returns the command string or an empty string if no new command is found.
     // Handles both text messages and inline keyboard callback queries.
     // timeoutSeconds: How long Telegram server should wait for a new message (0 = immediate return)
+    // Extract the sender's user id (from.id) from a Telegram update payload.
+    // Returns empty string if the field is missing or malformed. Same path
+    // works for both `message` and `callback_query` updates — both nest a
+    // top-level `from` object whose `id` field is the user that sent it.
+    static String parseFromId(const String& payload) {
+        int p = payload.indexOf("\"from\":{\"id\":");
+        if (p < 0) return String();
+        int start = p + 13;
+        int end = payload.indexOf(',', start);
+        if (end < 0) end = payload.indexOf('}', start);
+        if (end <= start) return String();
+        String s = payload.substring(start, end);
+        s.trim();
+        return s;
+    }
+
+    // Reject incoming commands from any chat other than the configured
+    // operator. Telegram bots can be messaged by any user who finds them —
+    // without this check, anyone could send /set_token and repoint the
+    // device. Compared against DeviceToken::chatId() (loaded from
+    // /device_config.json or secret.h fallback). Empty/unparseable sender
+    // is treated as unauthorized.
+    static bool isAuthorizedSender(const String& payload) {
+        String sender = parseFromId(payload);
+        if (sender.length() == 0) return false;
+        return sender == String(DeviceToken::chatId());
+    }
+
     static String checkForCommands(int &lastUpdateId, int timeoutSeconds = 10) {
+        if (!DeviceToken::isConfigured()) {
+            return "";
+        }
         if (!WiFi.isConnected()) {
             return "";
         }
@@ -946,12 +1031,12 @@ public:
         String url;
         if (usingProxy) {
             url = monitoringProxyBaseUrl() + "/v1/telegram/getUpdates" +
-                  String("?bot_token=") + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                  String("?bot_token=") + urlEncode(String(DeviceToken::token())) +
                   "&offset=" + String(lastUpdateId) +
                   "&timeout=" + String(timeoutSeconds) +
                   "&allowed_updates=" + urlEncode(allowedUpdates);
         } else {
-            url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+            url = String("https://api.telegram.org/bot") + DeviceToken::token() +
                   "/getUpdates?offset=" + String(lastUpdateId) +
                   "&timeout=" + String(timeoutSeconds) +
                   "&allowed_updates=" + urlEncode(allowedUpdates);
@@ -985,6 +1070,20 @@ public:
                 if (updateIdEnd > updateIdStart) {
                     String updateIdStr = payload.substring(updateIdStart, updateIdEnd);
                     int newUpdateId = updateIdStr.toInt();
+
+                    // Sender-id allowlist — protects the new /set_token and
+                    // /factory_reset_telegram commands (and every other
+                    // command) from unauthorized chats. Advance lastUpdateId
+                    // so the same unauthorized update isn't re-fetched on
+                    // the next long-poll. Silently drop (no reply) to avoid
+                    // confirming the bot exists.
+                    if (!isAuthorizedSender(payload)) {
+                        String sender = parseFromId(payload);
+                        logTransportLocalOnly(String("Telegram: dropped update from unauthorized sender=") + sender);
+                        lastUpdateId = newUpdateId + 1;
+                        http.end();
+                        return "";
+                    }
 
                     // Check for callback_query (inline keyboard button press)
                     int cbPos = payload.indexOf("\"callback_query\"", updateIdPos);

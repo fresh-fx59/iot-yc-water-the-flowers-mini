@@ -36,6 +36,7 @@ extern "C" inline time_t timegm(struct tm* tm_buf) {
 #include "config.h"
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
+#include "DeviceToken.h"
 #include "Settings.h"
 #include "PersistedState.h"
 #include "OverflowSensor.h"
@@ -312,6 +313,14 @@ void setup() {
     if (!LittleFS.begin(true)) {
         Serial.println("[mini] LittleFS mount failed");
     }
+
+    // ----- Device identity (Telegram bot token + chat_id) -----
+    // Resolves once, caches in DeviceToken's static storage. Order matters:
+    // must come AFTER LittleFS mount (so /device_config.json is readable) and
+    // BEFORE the network task spawns (so TelegramNotifier sees a configured
+    // token on its first ensureBotCommandsRegistered call). WiFi.macAddress()
+    // works pre-WiFi-begin on ESP32 — reads from eFuse.
+    DeviceToken::init();
 
     // ----- Settings -----
     if (!loadSettings(g_settings)) {

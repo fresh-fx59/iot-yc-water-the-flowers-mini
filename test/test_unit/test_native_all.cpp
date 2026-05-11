@@ -7,6 +7,7 @@ extern void register_moisture_tests();
 extern void register_overflow_tests();
 extern void register_persisted_state_tests();
 extern void register_watering_controller_tests();
+extern void register_device_token_tests();
 // Phase 7+: extern more registrators here.
 
 int main(int argc, char** argv) {
@@ -17,6 +18,7 @@ int main(int argc, char** argv) {
     register_overflow_tests();
     register_persisted_state_tests();
     register_watering_controller_tests();
+    register_device_token_tests();
     return UNITY_END();
 }
 
