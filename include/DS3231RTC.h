@@ -49,15 +49,24 @@ inline void writeRegister(uint8_t reg, uint8_t val) {
   Wire.endTransmission();
 }
 
-// Initialize DS3231 RTC and I2C
+// Initialize DS3231 RTC and I2C.
+//
+// Cold-boot probe retry: on a power-on reset the I2C bus and the DS3231's
+// internal oscillator both need ~100-200ms to settle before the chip will
+// ACK its address. A single probe right after Wire.begin() often returns
+// error=2 (NACK on address) even though the chip is physically present —
+// observed reliably on the YD-ESP32-23 v1.3 + cheap CJMCU DS3231 module.
+// We retry 5 times at 50ms each (max 250ms total) before giving up.
 inline bool init() {
-  // Initialize I2C bus
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  delay(50);  // Short delay for bus stabilization
 
-  // Check if DS3231 is responding
-  Wire.beginTransmission(DS3231_I2C_ADDRESS);
-  byte error = Wire.endTransmission();
+  byte error = 1;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    delay(50);
+    Wire.beginTransmission(DS3231_I2C_ADDRESS);
+    error = Wire.endTransmission();
+    if (error == 0) break;
+  }
 
   if (error != 0) {
     Serial.println("❌ ERROR: DS3231 not found on I2C bus!");

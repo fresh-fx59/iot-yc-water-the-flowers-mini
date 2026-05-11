@@ -52,6 +52,8 @@ The system has two power domains that share a common ground:
 
 If your pump runs on 5V and draws < 800 mA, you can power it from the same USB-C supply as the ESP32 — but check the supply's current limit. A 1A USB charger is borderline; 2A+ is safe. For larger pumps, use a separate supply.
 
+**The relay coil alone needs more current than a Mac USB port will supply.** A typical 5V relay coil draws ~70 mA; combined with WiFi TX bursts (200-300 mA peak), the ESP32 silently brown-outs and the relay never clicks. The symptom is `/test_motor` returning `{"ok":true}` but no audible click and no LED activity on the relay board. **Always provide an external 5V supply** (wall adapter to the ESP32 5V/VIN pin, or a separate 5V supply to the relay module's VCC with common GND). Plain USB-from-laptop is only enough for the bench-test of pure-logic peripherals (RTC, soil sensor, overflow sensor) — not the motor stage.
+
 ---
 
 ## 3. Pin assignment table
@@ -260,6 +262,7 @@ For unattended deployment, prefer a **wall-wart with brown-out protection** over
 | Soil reading always 4095 | Sensor disconnected or AOUT shorted to GND | Check yellow wire continuity |
 | Overflow trips constantly | Comparator pot too sensitive, or condensation on board | Turn pot toward dry-side until ON LED just goes off; mount sensor flat-side-up |
 | Motor never runs but bot says "Started" | Relay polarity flag wrong | Flip `MOTOR_RELAY_ACTIVE_HIGH` in config.h, rebuild, flash |
+| `/test_motor` returns ok but no click, no relay LEDs | USB can't supply the relay coil current; ESP32 brown-outs silently | Add an external 5V supply to ESP32 VIN/5V pin or the relay VCC, with common GND |
 | Motor stuck on after reboot | GPIO 5 floating during boot, relay default-closed | Add 10 kΩ pulldown from GPIO 5 to GND, OR wire to a different GPIO with reliable boot state |
 | Bot never responds | WiFi not connected, bad token, proxy down | See `docs/bot-guide.md` §Recovery procedures |
 | Bot online but commands ignored | `chat_id` mismatch | Verify `TELEGRAM_CHAT_ID` in `secret.h` matches your Telegram user (see Telegram Web → "Saved Messages" URL) |

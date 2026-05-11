@@ -90,8 +90,9 @@ this is a Phase 12 server-side task, not a firmware change.
 - `tools/grafana-dashboard-esp32-mini.json` - Grafana dashboard for
   single-zone metrics. Import into Grafana once the metrics proxy is
   updated.
-- `CLAUDE.md` - codebase guidance; same operational sections as the
-  mother but the firmware sections are stale until Phase 12 refresh.
+- `CLAUDE.md` - codebase guidance for Claude Code, scoped to the mini
+  (single-zone state machine, schedule, sensors, API, Telegram bot)
+  plus the Cloud.ru / monitoring runbook shared with the mother.
 
 ## License and origin
 

@@ -1,131 +1,118 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repo.
 
-ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
+ESP32-S3 single-zone watering controller: 1 motor (pump), 1 capacitive soil probe, 1 rain-drop overflow sensor, DS3231 RTC, daily cron-style schedule, Telegram bot, minimal web UI. Fork-and-strip of the 6-valve `iot-yc-water-the-flowers` mother — see `MOTHER_PROJECT.md` for provenance.
 
-**Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.25.0 (config.h:10)
-**Testing**: 36 native unit tests (desktop, no hardware)
+**Stack**: ESP32-S3-N16R8 (YD-ESP32-23 v1.3), LittleFS, ArduinoJson 6.21.0, DS3231 RTC (I2C SDA=14/SCL=3)
+**Version**: 1.0.2 (`config.h:7`)
+**Testing**: 42 native unit tests (desktop, no hardware) in `test/`
 
 ## Build & Deploy
 
-**Environments**: `esp32-s3-devkitc-1` (prod, src/main.cpp) | `esp32-s3-devkitc-1-test` (test, src/test-main.cpp) | `native` (tests)
+**Environments**: `esp32-s3-devkitc-1` (firmware, `src/main.cpp`) | `native` (unit tests). No separate test-firmware env.
 
 ```bash
 # Tests (run before any logic changes)
 pio test -e native
 
 # Production build + flash + monitor
-platformio run -t upload -e esp32-s3-devkitc-1
-platformio device monitor -b 115200 --raw
+pio run -t upload -e esp32-s3-devkitc-1
+pio device monitor -b 115200 --raw
 
-# Test firmware (web dashboard, serial menu 'H', OTA, no prod logic)
-platformio run -t upload -e esp32-s3-devkitc-1-test
+# Filesystem (required after editing data/web/prod/* files; wipes /settings.json + /state.json)
+pio run -t buildfs -e esp32-s3-devkitc-1
+pio run -t uploadfs -e esp32-s3-devkitc-1
 
-# Filesystem (required after editing data/web/prod/ files)
-platformio run -t buildfs -e esp32-s3-devkitc-1
-platformio run -t uploadfs -e esp32-s3-devkitc-1
-
-# Full clean deploy
-platformio run -t erase -e esp32-s3-devkitc-1 && platformio run -t buildfs -e esp32-s3-devkitc-1 && platformio run -t uploadfs -e esp32-s3-devkitc-1 && platformio run -t upload -e esp32-s3-devkitc-1 && platformio device monitor -b 115200 --raw
-
-# Quick redeploy
-platformio run -t clean -e esp32-s3-devkitc-1 && platformio run -t upload -e esp32-s3-devkitc-1 && platformio device monitor -b 115200 --raw
+# Full clean reflash
+pio run -t erase -e esp32-s3-devkitc-1 && pio run -t buildfs -e esp32-s3-devkitc-1 && pio run -t uploadfs -e esp32-s3-devkitc-1 && pio run -t upload -e esp32-s3-devkitc-1 && pio device monitor -b 115200 --raw
 ```
 
 ## Commit Style
 
-Version-prefixed, imperative, short: `v1.19.3: increase tray 2 watering timeout to 35s`
+Version-prefixed, imperative, short: `v1.0.2: queue boot banner on first WiFi-up`
 
 ## Architecture
 
 ### Dual-Core Design (CRITICAL)
 
-The ESP32-S3 runs two tasks on separate cores with strict isolation:
+ESP32-S3 runs two tasks on separate cores with strict isolation:
 
-- **Core 0** (networkTask, 8KB stack, 100ms loop): WiFi, Telegram, OTA, web server, MetricsPusher. Owns all network I/O.
-- **Core 1** (loop, 10ms loop): Watering state machine, sensor polling, safety watchdogs, auto-watering. NEVER touches network.
+- **Core 0** (`networkTask`, 8KB stack, 100ms loop): WiFi, OTA, web server, Telegram poll/notify, MetricsPusher, DebugHelper. Owns all network I/O.
+- **Core 1** (`loop`, 10ms loop): Scheduler tick, watering state machine, overflow watchdog, global motor watchdog. NEVER touches network.
 
 **Thread-safety rules**:
 - NEVER make HTTP/Telegram/metrics calls from Core 1. Use `queueTelegramNotification(message)` which goes through a 16-slot FreeRTOS queue (`notificationQueue`). Core 0 drains it via `processPendingNotifications()`.
-- `MetricsPusher::log()` is safe to call from Core 1 — it only writes to a circular buffer (no network).
-- Use `TelegramNotifier::formatWateringStarted/Complete/Schedule()` to build messages without network calls.
+- `MetricsPusher::logInfo/logWarn/logError()` is safe to call from Core 1 — only writes to a circular buffer (no network).
+- `Settings` is mutated from Core 0 (Telegram setters, `/api/settings`, `/api/calibrate`) and read from Core 1 (`tick`, `requestScheduled`). `WateringController` uses a `portMUX_TYPE` critical section in `updateSettings/settingsSnapshot` to prevent half-written reads.
 
 ### Header-Only Design
 
-All logic lives in `include/*.h` as inline headers. Source files (`src/main.cpp`, `src/test-main.cpp`) are thin entry points.
+All logic lives in `include/*.h` as inline headers. `src/main.cpp` is the only TU and defines every `extern` global declared in headers (see top of `main.cpp`).
 
 **Key modules**:
-- `config.h` — pins, timing constants, per-valve timeouts
-- `StateMachineLogic.h` — pure state machine, returns actions (no hardware ops), 36 tests
-- `LearningAlgorithm.h` — pure learning math helpers (water level, empty duration)
-- `WateringSystemStateMachine.h` — executes SM actions on hardware (processValve)
-- `WateringSystem.h` — orchestrator: 6 ValveControllers, auto-watering, learning, persistence, safety
-- `ValveController.h` — per-valve state: phase, learning data, shouldWaterNow()
-- `NetworkManager.h` — WiFi management with exponential backoff reconnection
-- `TelegramNotifier.h` — bot commands, notification formatting, debug messaging
-- `PlantLightController.h` — relay control with auto schedule (22:00-07:00)
-- `api_handlers.h` — web API endpoints (inline, registered in main.cpp)
-- `DS3231RTC.h` — RTC time source (no NTP), battery voltage, temperature
-- `MetricsPusher.h` — Prometheus metrics + Loki log push (Core 0)
-- `DebugHelper.h` — debug logging: `debug()` routes to Loki via `g_metricsLog` callback, `debugImportant()` routes to both Telegram and Loki
-- `ota.h` — OTA firmware updates
+- `config.h` — pins, timing constants, defaults, file paths, extern declarations
+- `Settings.h` — persisted user config: interval_days, schedule_hour/minute, max_runtime_sec, soil_threshold, calibration_dry/wet. JSON I/O with atomic rename.
+- `PersistedState.h` — persisted runtime state: last_run_unix, next_run_unix, overflow_latched, consecutive_skips_wet
+- `Scheduler.h` — pure scheduling math: `computeNextRun`, `shouldFireNow` (returns FIRE / SKIP_RECOMPUTE / WAIT)
+- `MoistureSensor.h` — averaged ADC reads, `pctFromCalibration`, `isWet(raw, threshold)`
+- `OverflowSensor.h` — software-debounced (5/7) rain-drop sensor with flash-persistent latch
+- `WateringController.h` — IDLE/WATERING state machine. Manual + scheduled requests, halt, abort, tick, watchdogCheck, onOverflowTrip. Returns `WateringEvent`; pure (no GPIO calls — those go through `WateringHal`).
+- `NetworkManager.h` — WiFi connect + exponential-backoff reconnect
+- `TelegramNotifier.h` — bot dispatcher, command handlers, formatters, inline menu, proxy/cooldown plumbing
+- `MetricsPusher.h` — Prometheus push + Loki log push (Core 0)
+- `DebugHelper.h` — log helper; routes to Loki via `g_metricsLog` callback
+- `DS3231RTC.h` — RTC driver, sole time source (no NTP)
+- `api_handlers.h` — HTTP API (inline namespace), registered via `registerApiHandlers()`
+- `ota.h` — HTTP OTA + WebServer + static file routing (mother, unchanged)
 - `secret.h` — credentials (never commit)
-- `TestConfig.h` — test environment stubs
+- `TestConfig.h` — pin/constant stubs for native tests
 
-**Feature placement**: config.h (hw constants), StateMachineLogic.h (state transitions), LearningAlgorithm.h (learning math), WateringSystem.h (orchestration + learning policy), NetworkManager.h (network), api_handlers.h (API), MetricsPusher.h (monitoring), test/ (tests)
+**Feature placement**: `config.h` (hw constants/defaults), `Scheduler.h` (cron math), `WateringController.h` (state machine + policy), `MoistureSensor.h` / `OverflowSensor.h` (sensor logic), `NetworkManager.h` (network), `api_handlers.h` (HTTP API), `MetricsPusher.h` (monitoring), `test/` (tests).
 
 ### Watering Flow
 
-5-phase cycle: IDLE → OPENING_VALVE → WAITING_STABILIZATION (500ms) → CHECKING_INITIAL_RAIN (wet=abort, dry=continue) → WATERING (pump on, 100ms sensor poll) → CLOSING_VALVE (process learning)
+Two-state machine: **IDLE ↔ WATERING**.
 
-**Critical**: Valve opens BEFORE sensor check (sensors need water flow). Pump only runs if initially dry.
-**Sequential**: `startSequentialWatering()` waters 5→0, one at a time.
-**Auto**: Every loop checks if tray empty (time-based) AND auto-watering enabled.
+Triggers leaving IDLE:
+- `requestManual()` — Telegram `/water` or `POST /api/water`. Skips soil pre-check; rejected if halted, overflow-latched, or already WATERING.
+- `requestScheduled()` — boot first-loop check or per-loop check when `Scheduler::shouldFireNow == FIRE`. Pre-reads soil; if `isWet`, advances `last_run_unix`, increments `consecutive_skips_wet`, emits `SkippedWet` (or `SkippedWetEscalated` at ≥2). Otherwise enters WATERING.
 
-**Single-valve invariant (v1.24.0+)**: At most one valve is non-IDLE at any time. All watering requests (manual/API/Telegram/auto/sequential batch) funnel through a universal FIFO queue in `WateringSystem`; the next queued valve starts `INTER_VALVE_GAP_MS` (30s default, `config.h`) after the previous completes. Learning baselines depend on this — concurrent valves corrupt flow-rate calibration. Key members: `valveQueue[]`, `valveQueueLength`, `currentlyActiveValve`, `nextValveReadyTime`, `batchSessionActive`; helpers `enqueueValve`, `processQueue`, `beginValveCycle`, `requestWatering`.
+While WATERING (per Core 1 loop tick):
+- `tick()` reads soil; if wet → `CompletedWet` (advances `last_run_unix`, motor off). If `(now - motor_start_ms) > max_runtime_sec` → `Timeout` (motor off, `last_run_unix` NOT advanced — cycle retries next schedule).
+- `watchdogCheck()` is independent of SM: if `(now - motor_start_ms) > max_runtime_sec + GLOBAL_WATCHDOG_MARGIN_MS` (5s) → force motor off and `ESP.restart()`.
+- Overflow latch trip during WATERING → `OverflowTripped` (motor off, latch persisted).
+- `abort()` (via `/stop`) → `Aborted` (motor off, `last_run_unix` NOT advanced).
 
-### Adaptive Learning
+`handleEvent()` in `main.cpp` is the single dispatcher: log → queue Telegram → persist state → recompute next_run when appropriate. `Rejected`/`None` are silent.
 
-Binary search/gradient ascent for optimal watering interval per tray. `emptyToFullDuration = BASE_INTERVAL_MS x intervalMultiplier`.
+### Scheduling
 
-**Algorithm paths** (processLearningData in WateringSystem.h):
-- fill < BASELINE_TOLERANCE(0.70) x baseline → +1.0x (penalty, waters less often)
-- fill > baseline → new baseline + 1.0x
-- fill ≈ baseline & stable → -0.5x (only decrease path, waters more often)
-- fill ≈ baseline & changed → +0.25x (fine tune)
-
-**Key constants**: BASE_INTERVAL_MS=86400000 (24h), AUTO_WATERING_MIN_INTERVAL_MS=86400000 (24h floor), BASELINE_TOLERANCE=0.70, consumption smoothing 70/30 weighted avg.
-
-**Persistence**: Active file `/learning_data_v1.19.12.json`, old file auto-deleted on boot. Reset calibration by swapping filenames in WateringSystem.h:27-30.
+Single fixed interval in days at a daily HH:MM. `Scheduler::computeNextRun` advances from `max(now, last_run_unix)` by `interval_days` and snaps to `HH:MM`. `SCHEDULE_GRACE_MS = 12h` controls how late after the scheduled slot we still fire (vs. silently recomputing). System TZ is pinned to UTC0 in `setup()`; `/settime` and `/time` use UTC end-to-end.
 
 ### Safety Layers
 
-1. **L1: Overflow Sensor** (GPIO 42, software debounced 5/7 threshold) → emergencyStopAll(), blocks all watering until `reset_overflow`
-2. **L2: Water Level Sensor** (GPIO 19, 11s continuation delay) → blocks watering when tank empty, auto-resumes
-3. **L3: Per-Valve Timeouts** (config.h) — Valve 0: 40s/45s, Valves 1-5: 25s/30s (normal/emergency)
-4. **L4: Two-Tier SM Timeouts** (WateringSystemStateMachine.h) — normal (learning) + emergency (force GPIO)
-5. **L5: Global Watchdog** (WateringSystem.h) — `globalSafetyWatchdog()` every loop, bypasses SM
-6. **L6: GPIO Reinitialization** — automatic after emergency events, manual via `/reinit_gpio`
+1. **L1: Overflow Sensor** (`OVERFLOW_SENSOR_DO_PIN = 42`, software-debounced 5/7) → latch on, motor off, persisted to `/state.json`. Survives reboot — Telegram `/reset_overflow` or `POST /api/reset_overflow` to clear.
+2. **L2: Per-Cycle Max Runtime** (`max_runtime_sec`, default 120s, settable 10..600) → `Timeout` event, `last_run_unix` not advanced so the schedule retries.
+3. **L3: Global Watchdog** (`max_runtime_sec + 5s`) → force motor OFF and `ESP.restart()`. Last-resort against a stuck SM.
+4. **L4: Boot-Time Motor-Off Guarantee** — `setup()` configures `MOTOR_RELAY_PIN` OUTPUT and writes `motorOffLevel()` BEFORE any other code path runs, so a brown-out reboot doesn't briefly assert the pump.
+5. **L5: Halt Mode** — `/halt` blocks all watering (manual + scheduled). NOT persistent across reboots. `/resume` clears.
 
 ### Program Flow
 
-**setup()**: Serial → RTC → LittleFS → wateringSystem.init() → MetricsPusher::init() → NetworkManager init → connectWiFi → setWateringSystemRef (MUST be before setupOta) → bootCountdown (10s /halt poll) → create networkTask on Core 0
+**`setup()`** (Core 1): Serial → pin TZ=UTC0 → motor pin OUTPUT+OFF → overflow/LED pins → DS3231 init + `setSystemTimeFromRTC` → LittleFS → load Settings (defaults if missing) → load PersistedState → construct static `WateringController` → restore last_run/overflow/skip-count → `recomputeNextRun` → create notification queue → `setWateringControllerRef` + `NetworkManager::setWateringController` → `NetworkManager::connectWiFi` → spawn `networkTask` on Core 0.
 
-**Core 1 loop()**: First loop: schedule + smart boot watering (first boot | overdue) | Every loop: processWateringLoop (SM + auto, blocked if halt) → 10ms delay
+**Core 1 `loop()`** (10ms): On first loop: check `Scheduler::shouldFireNow`; FIRE → `requestScheduled`, SKIP_RECOMPUTE → silently catch up. Every loop: overflow read + latch → if not latched: schedule check (when IDLE) OR `tick()` (when WATERING) → `watchdogCheck()`.
 
-**Core 0 networkTask()**: loopOta → NetworkManager::loopWiFi → if WiFi connected: ensureBotCommands → checkTelegramCommands → processPendingNotifications → DebugHelper::loop → MetricsPusher::loop → 100ms delay
-
-**processWateringLoop()**: Watchdog → overflow/water-level checks → auto-water check → process each valve SM → sequential transitions → publish state (2s)
+**Core 0 `networkTask()`** (100ms): `setupOta` (mounts LittleFS, registers HTTP routes via `registerApiHandlers`, starts httpServer) → `NetworkManager::init` → `MetricsPusher::init` (installs `g_metricsLog`) → `ensureBotCommandsRegistered`. Loop: `loopWiFi` → when connected: send boot banner once → `handleClient` → Telegram long-poll → drain notification queue → `DebugHelper::loop` → `MetricsPusher::loop` → re-register bot commands (idempotent).
 
 ## Cloud.ru VPS Infrastructure (45.151.30.146)
 
-All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
+All external services run on a single VPS, reused unchanged from the mother. SSH: `ssh user1@45.151.30.146`
 
 **Nginx** (:16443, TLS) — single entry point for ESP32. Routes by URL path:
-- `/v1/telegram/*` → localhost:18085 (telegram_bot_api_proxy.py)
-- `/v1/metrics/*`, `/v1/logs/*` → localhost:18086 (esp32_metrics_proxy.py)
+- `/v1/telegram/*` → localhost:18085 (`telegram_bot_api_proxy.py`)
+- `/v1/metrics/*`, `/v1/logs/*` → localhost:18086 (`esp32_metrics_proxy.py`)
 - `/health` → localhost:18085
 - Config: `/etc/nginx/conf.d/water-the-flowers-proxy.conf`
 - Cert: Let's Encrypt for `water-the-flowers-proxy.aiengineerhelper.com`
@@ -135,27 +122,23 @@ All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
 - `esp32-metrics-proxy.service` — metrics/logs receiver (port 18086)
 - `xray-client.service` — SOCKS5 proxy for Telegram API (127.0.0.1:1080)
 
-**Docker stack** (`/home/claude-developer/monitoring/docker-compose.yml`):
-- Prometheus (:9090) — scrapes metrics from esp32_metrics_proxy, node_exporter, cAdvisor
-- Loki (:3100) — receives logs from esp32_metrics_proxy
-- Grafana (:3000) — dashboards (admin/admin)
-- Tempo (:3200) — tracing (not used by ESP32)
-- OTel Collector (:14317/:14318) — not used by ESP32
-- node_exporter (:9100), cAdvisor (:8080)
+**Docker stack** (`/home/claude-developer/monitoring/docker-compose.yml`): Prometheus (:9090), Loki (:3100), Grafana (:3000), Tempo (:3200, unused), OTel Collector (:14317/:14318, unused), node_exporter (:9100), cAdvisor (:8080). Prometheus config at `/home/claude-developer/monitoring/prometheus/prometheus.yml`; job `esp32_watering` scrapes `host.docker.internal:18086` every 15s.
 
-**Prometheus config**: `/home/claude-developer/monitoring/prometheus/prometheus.yml` (mounted read-only into container). Job `esp32_watering` scrapes `host.docker.internal:18086` every 15s.
-
-**Contabo VPS** (31.220.78.216) — runs 3x-ui with VLESS inbound (:8443) for Telegram API routing. Docker: `3x-ui-proxy`.
+**Contabo VPS** (31.220.78.216) — 3x-ui VLESS inbound (:8443) for Telegram API routing. Docker container: `3x-ui-proxy`.
 
 ## Telegram
 
-**Commands**: `/menu` (inline button panel), `/help`, `/water N` (water tray 1-6), `/start_all`, `/halt`, `/resume`, `/time`, `/settime [YYYY-MM-DD HH:MM:SS]`, `/test_sensors`, `/test_sensor_N`, `/reset_overflow`, `/reinit_gpio`, `/overflow_status`, `/lamp_status`, `/lamp_on`, `/lamp_off`, `/lamp_auto`
+**Commands** (from `TelegramNotifier::getHelpText`, 20 total):
+- **Control**: `/menu`, `/help`, `/water`, `/stop`, `/status`, `/halt`, `/resume`, `/reset_overflow`, `/overflow_status`, `/reinit_gpio`
+- **Settings**: `/set_interval <days>` (1..30), `/set_time HH:MM`, `/set_runtime <sec>` (10..600), `/set_threshold <raw>` (0..4095), `/calibrate_wet`, `/calibrate_dry`
+- **Time**: `/time`, `/settime [YYYY-MM-DD HH:MM:SS]` (UTC)
+- **Diagnostics**: `/test_motor <sec>` (1..10), `/test_sensor`
 
-**State JSON** (via `/api/status`): pump, sequential_mode, water_level{status,blocked}, overflow{detected,raw_value,trigger_streak}, plant_light{state,mode,schedule_on/off}, valves[]{id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}}
+`/menu` shows a 6-button inline keyboard: Water, Stop, Status, Halt, Resume, Help.
 
-**Proxy** (v1.18.5+): Telegram Bot API proxy on Cloud.ru VPS (45.151.30.146). Proxy script: `tools/telegram_bot_api_proxy.py`, systemd: `telegram-bot-api-proxy.service`, env: `/etc/default/telegram-bot-api-proxy`. Nginx TLS termination on :16443 → localhost:18085.
+**Proxy** (Cloud.ru): `tools/telegram_bot_api_proxy.py`, env: `/etc/default/telegram-bot-api-proxy`. Nginx TLS termination on :16443 → localhost:18085.
 
-**SOCKS5 routing** (v1.20.0+): Telegram API is ISP-blocked on Cloud.ru. Traffic routes through a VLESS tunnel: Cloud.ru xray client (SOCKS5 on 127.0.0.1:1080) → Contabo (31.220.78.216) xray/3x-ui VLESS inbound (:8443) → api.telegram.org. Env var `SOCKS5_PROXY=127.0.0.1:1080` in `/etc/default/telegram-bot-api-proxy`. Systemd: `xray-client.service` (auto-restart, enabled on boot). Xray config: `/etc/xray/config.json`, client UUID `cloudru-telegram-proxy` in 3x-ui.
+**SOCKS5 routing**: Telegram API is ISP-blocked on Cloud.ru. Traffic routes through a VLESS tunnel: Cloud.ru xray client (SOCKS5 on 127.0.0.1:1080) → Contabo (31.220.78.216) xray VLESS inbound (:8443) → api.telegram.org. Env: `SOCKS5_PROXY=127.0.0.1:1080` in `/etc/default/telegram-bot-api-proxy`.
 
 **Telegram not working? Checklist**:
 1. SSH to Cloud.ru: `ssh user1@45.151.30.146`
@@ -164,88 +147,107 @@ All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
 4. Test SOCKS5: `curl -s --socks5-hostname 127.0.0.1:1080 https://api.telegram.org/` (should return HTML)
 5. Test proxy: `curl -s "http://127.0.0.1:18085/v1/telegram/getUpdates?bot_token=<TOKEN>&offset=0&timeout=0" -H "Authorization: Bearer <TOKEN>"` (should return `{"ok":true}`)
 6. Check logs: `sudo journalctl -u xray-client -n 20` and `sudo journalctl -u telegram-bot-api-proxy -n 20`
-7. If Contabo xray is down: `docker restart 3x-ui-proxy` on Contabo (31.220.78.216)
+7. If Contabo xray is down: `docker restart 3x-ui-proxy` on Contabo
 8. No ESP32 firmware update needed — ESP32 connects to the same nginx endpoint regardless of backend routing
 
 ## Monitoring (Prometheus + Loki + Grafana)
 
-**Architecture**: ESP32 pushes metrics JSON (10s active / 60s idle) and debug logs (only when buffer non-empty) to `esp32_metrics_proxy.py` on Cloud.ru via nginx TLS :16443. Proxy stores metrics for Prometheus scraping and forwards logs to Loki.
+**Architecture**: ESP32 pushes metrics JSON (10s while watering / 60s idle) and debug logs (when buffer non-empty) to `esp32_metrics_proxy.py` on Cloud.ru via nginx TLS :16443. Proxy stores metrics for Prometheus scraping and forwards logs to Loki.
 
-**Proxy**: `tools/esp32_metrics_proxy.py`, systemd: `esp32-metrics-proxy.service`, env: `/etc/default/esp32-metrics-proxy`, port 18086. Nginx routes `/v1/metrics/` and `/v1/logs/` to this proxy.
+**Note**: The mini emits a single-zone metrics shape (`motor_on`, `soil_raw`, `overflow_latched`, etc.) — the server-side `esp32_metrics_proxy.py` originally targeted the mother's multi-valve payload. Server-side proxy update is a separate task; firmware-side payload is final.
 
-**ESP32 firmware**: `MetricsPusher.h` runs on Core 0 in networkTask. Log buffer: 64 entries circular. Push interval: 10s when any valve active, 60s idle. Uses same proxy URL and auth token as Telegram proxy.
+**ESP32 firmware**: `MetricsPusher.h` runs on Core 0 in `networkTask`. Log buffer: 64 entries circular. Push intervals: `METRICS_PUSH_INTERVAL_ACTIVE_MS=10000`, `METRICS_PUSH_INTERVAL_IDLE_MS=60000`. Uses same proxy URL and auth token as Telegram proxy.
 
-**Grafana dashboard**: "ESP32 Watering System" (uid: `esp32-watering`) -- 4 rows: Watering Intervals & Learning, Events & Sensors, System Health, Debug Logs. Dashboard JSON: `tools/grafana-dashboard-esp32.json`.
-
-**Metrics endpoint**: Prometheus scrapes `host.docker.internal:18086/metrics` every 15s (job: `esp32_watering`).
-
-**Log capture points**: State transitions, learning decisions, safety events (overflow/timeout/watchdog), auto-watering triggers, Telegram success/failure, WiFi connect/disconnect. Levels: debug/info/warn/error.
+**Grafana dashboard**: `tools/grafana-dashboard-esp32-mini.json` (import once metrics proxy is updated).
 
 **Monitoring not working? Checklist**:
-1. Check proxy: `sudo systemctl status esp32-metrics-proxy` → restart: `sudo systemctl restart esp32-metrics-proxy`
-2. Test proxy health: `curl -s http://127.0.0.1:18086/health`
-3. Test metrics endpoint: `curl -s http://127.0.0.1:18086/metrics`
-4. Check Prometheus targets: `curl -s http://localhost:9090/api/v1/targets | grep esp32`
-5. Check Loki: `curl -sG 'http://localhost:3100/loki/api/v1/query' --data-urlencode 'query={job="esp32"}' --data-urlencode 'limit=1'`
-6. Check nginx routing: `curl -sk https://localhost:16443/v1/metrics/push` (should return 401, not 404)
+1. `sudo systemctl status esp32-metrics-proxy` → restart if needed
+2. `curl -s http://127.0.0.1:18086/health`
+3. `curl -s http://127.0.0.1:18086/metrics`
+4. `curl -s http://localhost:9090/api/v1/targets | grep esp32`
+5. `curl -sG 'http://localhost:3100/loki/api/v1/query' --data-urlencode 'query={job="esp32"}' --data-urlencode 'limit=1'`
+6. `curl -sk https://localhost:16443/v1/metrics/push` (expect 401, not 404)
 7. Check ESP32 serial for `[MetricsPusher]` messages
 
 ## Web Interface
 
-**Files**: `data/web/prod/` (index.html, css/style.css, js/app.js)
-**API**: `/api/water?valve=N` (1-6), `/api/stop?valve=N|all`, `/api/start_all`, `/api/status`, `/api/lamp?action=on|off|auto`, `/api/reset_calibration?valve=N|all`, `/firmware` (auth: admin/OTA_PASSWORD)
-**Note**: API is 1-indexed (1-6), internal code is 0-indexed (0-5)
+**Files**: `data/web/prod/` (`index.html`, `css/`, `js/`). Single-page UI: motor button, soil bar, settings form.
+
+**API** (registered in `registerApiHandlers()`, all return `application/json`):
+- `GET  /api/status` — version, uptime, state, halted, pump, overflow{detected,raw_value,trigger_streak}, soil{raw,pct,threshold,last_read_unix}, schedule{interval_days,time_hhmm,last_run_unix,next_run_unix,consecutive_skips_wet}
+- `POST /api/water` — manual cycle (409 if already_running / overflow_latched / halted)
+- `POST /api/stop` — abort active cycle (409 if no_active_cycle)
+- `POST /api/halt` — block all watering
+- `POST /api/resume` — unblock
+- `POST /api/reset_overflow` — clear latch
+- `GET  /api/settings` — current Settings JSON
+- `POST /api/settings` — body = full Settings JSON (validates ranges, 400 on field violation)
+- `POST /api/calibrate?ref=wet|dry` — capture current raw reading, recompute midpoint threshold
+- `GET  /api/test_sensor` — single soil raw read
+- `POST /api/test_motor?seconds=N` — pulse motor 1..10s (blocking)
+- `/firmware` — HTTP OTA (basic auth: admin / `OTA_PASSWORD`)
 
 ## Hardware
 
-**Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=19 (INPUT_PULLUP, HIGH=water, LOW=empty), Plant Light=41 (active-low relay), LED=48, RTC I2C SDA=14/SCL=3, Battery ADC=1/Ctrl=2
+**Pins** (`config.h:10-25`):
+- Motor relay: GPIO 5 (active-high by default; flip `MOTOR_RELAY_ACTIVE_HIGH` for active-low modules)
+- Soil sensor AOUT: GPIO 4 (ADC1 — required, ADC2 can't be read with WiFi active)
+- Overflow sensor DO: GPIO 42 (INPUT_PULLUP, LOW = water on floor)
+- LED: GPIO 48 (NeoPixel pin on this board; firmware drives as plain GPIO — does not visibly light)
+- RTC I2C: SDA=GPIO 14, SCL=GPIO 3
+- Battery monitor (inherited, unused by mini logic): ADC=GPIO 1, Ctrl=GPIO 2
 
-**Sensor Logic (CRITICAL)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY.
+**Board**: YD-ESP32-23 v1.3 (N16R8 — 16 MB flash, 8 MB octal PSRAM). `platformio.ini` sets `qio_opi` memory type and 16MB flash overrides.
 
-**Relay Module**: 6-channel relay with automatic sensor interlock — when rain sensor detects WET, relay opens regardless of GPIO state. No GPIO read-back verification (would show LOW when sensor wet, expected behavior).
+**Sensors**: capacitive soil probe runs on **3.3V** (5V exceeds ADC range and corrupts readings). Rain-drop module mounted as floor overflow detector — DO line, AO unused.
+
+**Relay polarity**: most cheap 5V relay modules are *active-LOW*. Check with `/test_motor 1`: if relay LED is inverted from expected, flip `MOTOR_RELAY_ACTIVE_HIGH = false` in `config.h`.
+
+See `docs/wiring-diagram.md` for bill of materials, schematic, module-by-module hookup, and assembly checklist.
 
 ## Code Changes Guide
 
-**Watering logic**: StateMachineLogic.h → WateringSystemStateMachine.h → WateringSystem.h. Always run `pio test -e native` first.
+**Watering logic**: `WateringController.h` is the pure state machine. Always run `pio test -e native` first; tests cover IDLE↔WATERING transitions, abort, overflow, timeout, watchdog, halt, skip-wet escalation.
 
-**Telegram commands**: main.cpp `checkTelegramCommands()`
+**Scheduling**: `Scheduler.h` is pure math, fully unit-tested. Mutations: change `interval_days` / `schedule_hour` / `schedule_minute` via `/api/settings` or Telegram setters, then call `recomputeNextRun()`.
 
-**API endpoints**: api_handlers.h (inline), register in main.cpp `registerApiHandlers()`. API 1-indexed → internal 0-indexed. Access `g_wateringSystem_ptr`.
+**Telegram commands**: `TelegramNotifier::processCommand` (a long if/else chain). Add new command → also add to `getHelpText` and `getBotCommandsJson` so it appears in the in-app menu.
 
-**Web UI**: Edit `data/web/prod/` → `pio run -t buildfs` → `pio run -t uploadfs`
+**API endpoints**: `api_handlers.h` (inline namespace), register in `registerApiHandlers()`. Access globals via `g_controller_ptr`, `g_settings_ptr`, `g_overflow_ptr` (null-check via `_bootReady()` → 503).
 
-**Learning tuning**: LearningAlgorithm.h (math), WateringSystem.h (policy in processLearningData), ValveController.h (shouldWaterNow trigger)
+**Web UI**: edit `data/web/prod/` → `pio run -t buildfs && pio run -t uploadfs`. Will wipe `/settings.json` and `/state.json` — defaults are rewritten on next boot.
 
-**Persistence**: Save after watering/reset, load on init(). Swap filenames in WateringSystem.h:27-30 to reset all calibrations.
+**Persistence**: `Settings::save/load` and `PersistedState::save/load` use atomic temp-file + rename. Reset all persisted state by `uploadfs` (wipes LittleFS) or by deleting via web `/filesystem` endpoint.
 
-**Monitoring**: MetricsPusher.h (ESP32 push logic), tools/esp32_metrics_proxy.py (server-side proxy). Add log capture with `MetricsPusher::logInfo/logWarn/logError()`. Metrics JSON format must match proxy's `_build_prometheus_metrics()`. Dashboard: edit `tools/grafana-dashboard-esp32.json` then re-import via Grafana API.
+**Monitoring**: `MetricsPusher.h` (ESP32 push), `tools/esp32_metrics_proxy.py` (server proxy). Add log capture with `MetricsPusher::logInfo/logWarn/logError()`. Metrics JSON shape lives in `MetricsPusher::buildMetricsJson()`.
 
-**Config**: config.h (pins, timing), secret.h (credentials, never commit)
+**Config**: `config.h` (pins, timing, defaults, file paths), `secret.h` (credentials, never commit).
 
 ## Gotchas
 
-1. Baud 115200, use `--raw` if gibberish
-2. API 1-6, internal 0-5
-3. Sensors need TWO power signals: valve pin HIGH + GPIO 18 HIGH
-4. `setWateringSystemRef()` BEFORE `setupOta()` or API fails
-5. Watering continues if WiFi/MQTT down (by design)
-6. LittleFS must init before `wateringSystem.init()` (loads persisted data)
-7. millis() overflow ~49 days is handled throughout
-8. Halt mode is NOT persistent across reboots
-9. Overflow flag resets on boot (not persistent)
-10. DS3231 is sole time source (no NTP dependency)
-11. LED is GPIO 48 (not 2)
-12. Plant light relay is active-low (`PLANT_LIGHT_ACTIVE_HIGH = false`)
-13. WiFi reconnection must use `WiFi.disconnect(true)` before `WiFi.begin()` — omitting cleanup corrupts the ESP32 WiFi driver
-14. Overflow sensor uses software debouncing (5/7 readings must be LOW) to filter electrical noise
-15. Water level sensor has 11s continuation delay before blocking (allows active cycles to finish)
-16. MQTT outage notifications suppressed for < 10 min (`MQTT_OUTAGE_NOTIFY_THRESHOLD_MS`)
-17. MetricsPusher.h MUST be included LAST in main.cpp (depends on WateringSystem.h). Log routing uses `g_metricsLog` function pointer callback (set in `MetricsPusher::init()`) so headers included before MetricsPusher.h can log without compile-time dependency.
-18. esp32_metrics_proxy.py must bind to 0.0.0.0 (not 127.0.0.1) — Prometheus runs in Docker and reaches it via `host.docker.internal`
+1. Baud 115200, use `--raw` if gibberish.
+2. `setWateringControllerRef()` AND `NetworkManager::setWateringController()` MUST be called before `networkTask` spawn — otherwise API and reconnect logic see nullptr.
+3. `MetricsPusher.h` MUST be `#include`d LAST in `main.cpp` — depends on `WateringController` + `Settings` + `OverflowSensor` declarations and reads file-scope globals via extern. Log routing uses `g_metricsLog` callback (set in `MetricsPusher::init()`) so headers included before it can still log.
+4. `WebServer.h` MUST be included BEFORE `config.h` in `main.cpp` — `secret.h`'s `#define SSID "..."` would otherwise clash with `WiFiSTAClass::SSID()`.
+5. ESP-IDF newlib has no `timegm()`. `main.cpp` defines a shim (`mktime` under pinned `TZ=UTC0`). The TZ pin must happen before any other task starts.
+6. `LittleFS.begin(true)` is called in both `setup()` and `setupOta()` — second call is a no-op; the duplicate is intentional so Settings/PersistedState load works in `setup()` before the network task spawns.
+7. Overflow latch is **persistent** across reboots (in `/state.json`). Halt mode is **not**.
+8. `Timeout` and `Aborted` events do NOT advance `last_run_unix` — the schedule retries on the next slot.
+9. `Settings::deriveThreshold` only runs on `/api/calibrate` and `/calibrate_wet|dry`. `/api/settings POST` and `/set_threshold` preserve user-supplied threshold verbatim.
+10. DS3231 is sole time source (no NTP). Install CR2032 backup battery before first power-on. System TZ pinned to UTC0 in `setup()` — `/settime` and `/time` are UTC.
+11. millis() overflow ~49 days is handled by unsigned subtraction throughout.
+12. WiFi reconnection in `NetworkManager` uses `WiFi.disconnect(true)` before `WiFi.begin()` — omitting cleanup corrupts the ESP32 WiFi driver.
+13. Overflow sensor uses software debouncing (5 LOW reads of last 7) to filter electrical noise; trip latency ~50ms at the 10ms loop cadence.
+14. `WateringEvent::WatchdogTripped` triggers `ESP.restart()` after a 500ms delay so the queued Telegram alert has a chance to send.
+15. `requestManual()` still consumes one soil sample even though it ignores the value — keeps the HAL call pattern symmetric with `requestScheduled()` for testability.
+16. GPIO 3 is a strapping pin (used at boot for JTAG signal source). DS3231 module's built-in I2C pull-ups hold it HIGH at boot; without them the chip enters debug mode. If you swap the RTC module, verify pull-ups are present.
+17. GPIO 4 is on ADC1 — soil sensor must stay on an ADC1 pin (GPIO 1–10) because ADC2 cannot be read while WiFi is active.
+18. `esp32_metrics_proxy.py` must bind to 0.0.0.0 (not 127.0.0.1) — Prometheus runs in Docker and reaches it via `host.docker.internal`.
 
 ## Testing & Debug
 
-**Native tests**: `pio test -e native` — 36 tests covering state transitions, timeouts, learning math, safety scenarios, plant light schedule, per-valve config
-**HW test firmware**: `platformio run -t upload -e esp32-s3-devkitc-1-test`
-**Serial menu** (115200): H=help, L=LED, P=pump, 1-6/A/Z=valves, R/M/S=sensors, W/N=water level, T/I=RTC, F=full sequence, X=emergency
-**Debug patterns**: ═══ (state), brain (learning), sparkle (baseline), clock (auto), check (success), ERROR (fail)
+**Native tests** (`pio test -e native`): 42 tests across `test_moisture`, `test_overflow`, `test_persisted_state`, `test_scheduler`, `test_settings`, `test_watering_controller` (+ `test_native_all` aggregator). Cover state transitions, abort/overflow/timeout/watchdog/halt, skip-wet escalation, scheduler edge cases, JSON round-trips, atomic save.
+
+**Serial monitor**: 115200, `--raw` flag for clean output. Boot banner: `[mini] vX.Y.Z boot`. Telegram boot banner is queued on first WiFi-up.
+
+**Debug logs**: `MetricsPusher::logInfo/logWarn/logError` from any core (Core 1 safe — circular buffer only). `DebugHelper::loop` drains to Loki on Core 0. Important debug strings include: `watering started`, `watering complete (wet)`, `schedule skipped - soil already wet`, `watering timeout`, `overflow tripped`, `watchdog: motor stuck - restarting`.
