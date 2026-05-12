@@ -178,7 +178,7 @@ static void handleEvent(WateringEvent ev) {
         break;
 
     case WateringEvent::CompletedWet:
-        MetricsPusher::logInfo("watering complete (wet)");
+        MetricsPusher::logInfo("watering complete");
         queueTelegramNotification(TelegramNotifier::formatWateringComplete());
         recomputeNextRun();
         persistState();

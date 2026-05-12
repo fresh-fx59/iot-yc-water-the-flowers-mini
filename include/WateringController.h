@@ -27,10 +27,17 @@ enum class WateringState { IDLE, WATERING };
 enum class WateringEvent {
     None,                  // No state transition; orchestrator should not log/notify.
     Started,
-    CompletedWet,          // Soil reached threshold during a cycle.
-    SkippedWet,
-    SkippedWetEscalated,
-    Timeout,
+    CompletedWet,          // Cycle ran to the configured `max_runtime_sec` cap.
+                           // Despite the legacy name, this fires for BOTH manual
+                           // and scheduled cycles in v1.2.3+: the soil sensor
+                           // is no longer consulted as a stop signal (sensor is
+                           // monitoring-only — see CLAUDE.md "Watering Flow").
+                           // Advances last_run_unix.
+    SkippedWet,            // (deprecated since v1.2.3 — never emitted)
+    SkippedWetEscalated,   // (deprecated since v1.2.3 — never emitted)
+    Timeout,               // (deprecated since v1.2.3 — never emitted; the
+                           // runtime cap is now a normal completion, not a
+                           // pathological overrun)
     OverflowTripped,
     Rejected,
     WatchdogTripped,
@@ -81,49 +88,44 @@ public:
         return copy;
     }
 
-    // Manual trigger (Telegram /water, web POST /api/water). Ignores pre-check.
-    // NOTE: We still consume one soil sample so callers (and tests) can model
-    // a single read per request symmetrically with requestScheduled(); the
-    // sample value is intentionally not used for any decision.
+    // Manual trigger (Telegram /water, web POST /api/water).
+    // NOTE: as of v1.2.3 manual and scheduled cycles are behaviorally
+    // identical — both pump for `max_runtime_sec` and emit CompletedWet
+    // when the cap is hit. The soil sensor is no longer a decision input
+    // (sensor on the deployed bots reads stuck-at-zero, which was
+    // collapsing every cycle to a single 10 ms pulse).
+    // We still consume one soil sample so the HAL call pattern matches
+    // requestScheduled (keeps tests in lockstep).
     WateringEvent requestManual() {
         if (state_ == WateringState::WATERING) return WateringEvent::Rejected;
         if (overflow_latched_) return WateringEvent::Rejected;
         if (halted_) return WateringEvent::Rejected;
-        (void)hal_.readSoilRaw();  // consume pre-check sample, ignore value
+        (void)hal_.readSoilRaw();  // monitoring-only; not a decision input
         return enterWatering();
     }
 
-    // Schedule trigger. Pre-checks soil; if wet, increments skip counter and bails.
+    // Schedule trigger. v1.2.3+: pumps unconditionally (sensor monitoring-only).
     WateringEvent requestScheduled() {
         if (state_ == WateringState::WATERING) return WateringEvent::Rejected;
         if (overflow_latched_) return WateringEvent::Rejected;
         if (halted_) return WateringEvent::Rejected;
-        Settings cfg = settingsSnapshot();
-        int raw = hal_.readSoilRaw();
-        if (Moisture::isWet(raw, cfg.soil_threshold)) {
-            ++consecutive_skips_wet_;
-            last_run_unix_ = hal_.unixNow();
-            if (consecutive_skips_wet_ >= CONSECUTIVE_SKIPS_WET_ALERT_THRESHOLD) {
-                return WateringEvent::SkippedWetEscalated;
-            }
-            return WateringEvent::SkippedWet;
-        }
-        consecutive_skips_wet_ = 0;
+        (void)hal_.readSoilRaw();  // monitoring-only; not a decision input
+        consecutive_skips_wet_ = 0; // legacy counter; stays at 0 in v1.2.3+
         return enterWatering();
     }
 
     // Per-loop check while WATERING.
+    // Only exits the WATERING state when the runtime cap is reached
+    // (CompletedWet) or via external signals (overflow / /stop / watchdog).
+    // The soil sample inside the tick is intentionally retained for HAL
+    // call-pattern symmetry but is NOT a decision input.
     WateringEvent tick() {
         if (state_ != WateringState::WATERING) return WateringEvent::None;
         Settings cfg = settingsSnapshot();
         unsigned long now = hal_.millisNow();
         unsigned long max_ms = (unsigned long)cfg.max_runtime_sec * 1000UL;
+        (void)hal_.readSoilRaw();  // monitoring-only
         if ((now - motor_start_ms_) > max_ms) {
-            return exitToIdleNoLastRunUpdate(WateringEvent::Timeout);
-        }
-        int raw = hal_.readSoilRaw();
-        if (Moisture::isWet(raw, cfg.soil_threshold)) {
-            consecutive_skips_wet_ = 0;
             last_run_unix_ = hal_.unixNow();
             return exitToIdle(WateringEvent::CompletedWet);
         }

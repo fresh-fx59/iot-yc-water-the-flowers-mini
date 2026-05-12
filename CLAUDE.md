@@ -5,7 +5,7 @@ Guidance for Claude Code (claude.ai/code) working in this repo.
 ESP32-S3 single-zone watering controller: 1 motor (pump), 1 capacitive soil probe, 1 rain-drop overflow sensor, DS3231 RTC, daily cron-style schedule, Telegram bot, minimal web UI. Fork-and-strip of the 6-valve `iot-yc-water-the-flowers` mother — see `MOTHER_PROJECT.md` for provenance.
 
 **Stack**: ESP32-S3-N16R8 (YD-ESP32-23 v1.3), LittleFS, ArduinoJson 6.21.0, DS3231 RTC (I2C SDA=14/SCL=3)
-**Version**: 1.2.0 (`config.h:7`)
+**Version**: 1.2.3 (`config.h:7`)
 **Testing**: 71 native unit tests (desktop, no hardware) in `test/`
 
 ## Build & Deploy
@@ -78,10 +78,10 @@ Two-state machine: **IDLE ↔ WATERING**.
 
 Triggers leaving IDLE:
 - `requestManual()` — Telegram `/water` or `POST /api/water`. Skips soil pre-check; rejected if halted, overflow-latched, or already WATERING.
-- `requestScheduled()` — boot first-loop check or per-loop check when `Scheduler::shouldFireNow == FIRE`. Pre-reads soil; if `isWet`, advances `last_run_unix`, increments `consecutive_skips_wet`, emits `SkippedWet` (or `SkippedWetEscalated` at ≥2). Otherwise enters WATERING.
+- `requestScheduled()` — boot first-loop check or per-loop check when `Scheduler::shouldFireNow == FIRE`. v1.2.3+: enters WATERING unconditionally; the soil sensor is no longer a decision input (sensor proved unreliable on the deployed bots, reading stuck-at-zero and collapsing every cycle). Soil is still sampled for monitoring/metrics. `SkippedWet`, `SkippedWetEscalated`, and the `consecutive_skips_wet` counter are kept in the API surface for backward compatibility but are never emitted/incremented.
 
 While WATERING (per Core 1 loop tick):
-- `tick()` reads soil; if wet → `CompletedWet` (advances `last_run_unix`, motor off). If `(now - motor_start_ms) > max_runtime_sec` → `Timeout` (motor off, `last_run_unix` NOT advanced — cycle retries next schedule).
+- `tick()` v1.2.3+: only exit condition is the runtime cap. `(now - motor_start_ms) > max_runtime_sec` → `CompletedWet` (legacy name; advances `last_run_unix`, motor off). The old wet-soil early-exit branch is gone. `Timeout` is kept in the enum but never emitted — what used to be the pathological-overrun event is now the normal end-of-cycle and uses `CompletedWet`.
 - `watchdogCheck()` is independent of SM: if `(now - motor_start_ms) > max_runtime_sec + GLOBAL_WATCHDOG_MARGIN_MS` (5s) → force motor off and `ESP.restart()`.
 - Overflow latch trip during WATERING → `OverflowTripped` (motor off, latch persisted).
 - `abort()` (via `/stop`) → `Aborted` (motor off, `last_run_unix` NOT advanced).
@@ -95,7 +95,7 @@ Single fixed interval in days at a daily HH:MM. `Scheduler::computeNextRun` adva
 ### Safety Layers
 
 1. **L1: Overflow Sensor** (`OVERFLOW_SENSOR_DO_PIN = 42`, software-debounced 5/7) → latch on, motor off, persisted to `/state.json`. Survives reboot — Telegram `/reset_overflow` or `POST /api/reset_overflow` to clear.
-2. **L2: Per-Cycle Max Runtime** (`max_runtime_sec`, default 120s, settable 10..600) → `Timeout` event, `last_run_unix` not advanced so the schedule retries.
+2. **L2: Per-Cycle Max Runtime** (`max_runtime_sec`, default 120s, settable 10..600) → `CompletedWet` event (v1.2.3+: this is the normal end of every cycle; advances `last_run_unix`). The pump always runs for exactly `max_runtime_sec`.
 3. **L3: Global Watchdog** (`max_runtime_sec + 5s`) → force motor OFF and `ESP.restart()`. Last-resort against a stuck SM.
 4. **L4: Boot-Time Motor-Off Guarantee** — `setup()` configures `MOTOR_RELAY_PIN` OUTPUT and writes `motorOffLevel()` BEFORE any other code path runs, so a brown-out reboot doesn't briefly assert the pump.
 5. **L5: Halt Mode** — `/halt` blocks all watering (manual + scheduled). NOT persistent across reboots. `/resume` clears.
@@ -248,14 +248,14 @@ Server setup: `tools/nginx-firmware-snippet.conf` is a drop-in `location /v1/fir
 5. ESP-IDF newlib has no `timegm()`. `main.cpp` defines a shim (`mktime` under pinned `TZ=UTC0`). The TZ pin must happen before any other task starts.
 6. `LittleFS.begin(true)` is called in both `setup()` and `setupOta()` — second call is a no-op; the duplicate is intentional so Settings/PersistedState load works in `setup()` before the network task spawns.
 7. Overflow latch is **persistent** across reboots (in `/state.json`). Halt mode is **not**.
-8. `Timeout` and `Aborted` events do NOT advance `last_run_unix` — the schedule retries on the next slot.
+8. `Aborted` does NOT advance `last_run_unix` (the user cancelled; treat as no-op). `CompletedWet` and `OverflowTripped` both occur after the pump has actually run, so they advance `last_run_unix`. `Timeout` is preserved in the enum but is dead code in v1.2.3+ — the runtime cap is now a normal completion, not a pathological overrun.
 9. `Settings::deriveThreshold` only runs on `/api/calibrate` and `/calibrate_wet|dry`. `/api/settings POST` and `/set_threshold` preserve user-supplied threshold verbatim.
 10. DS3231 is the free-running time source. NTP is used only as a one-shot setter via `/settime` (no-arg → `NtpHelper::syncFromPool("ru.pool.ntp.org")` writes the RTC). Install CR2032 backup battery before first power-on. System TZ pinned to UTC0 in `setup()` — `/settime` and `/time` are UTC.
 11. millis() overflow ~49 days is handled by unsigned subtraction throughout.
 12. WiFi reconnection in `NetworkManager` uses `WiFi.disconnect(true)` before `WiFi.begin()` — omitting cleanup corrupts the ESP32 WiFi driver.
 13. Overflow sensor uses software debouncing (5 LOW reads of last 7) to filter electrical noise; trip latency ~50ms at the 10ms loop cadence.
 14. `WateringEvent::WatchdogTripped` triggers `ESP.restart()` after a 500ms delay so the queued Telegram alert has a chance to send.
-15. `requestManual()` still consumes one soil sample even though it ignores the value — keeps the HAL call pattern symmetric with `requestScheduled()` for testability.
+15. Both `requestManual()` and `requestScheduled()` consume a soil sample even though neither uses the value for a decision — kept for HAL-call-pattern symmetry with the test mocks. Same applies to `tick()`'s soil read.
 16. GPIO 3 is a strapping pin (used at boot for JTAG signal source). DS3231 module's built-in I2C pull-ups hold it HIGH at boot; without them the chip enters debug mode. If you swap the RTC module, verify pull-ups are present.
 17. GPIO 4 is on ADC1 — soil sensor must stay on an ADC1 pin (GPIO 1–10) because ADC2 cannot be read while WiFi is active.
 18. `esp32_metrics_proxy.py` must bind to 0.0.0.0 (not 127.0.0.1) — Prometheus runs in Docker and reaches it via `host.docker.internal`.

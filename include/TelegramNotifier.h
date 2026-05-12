@@ -542,6 +542,10 @@ public:
     }
 
     static String formatWateringComplete() {
+        if (g_settings_ptr) {
+            return String("Watering complete (ran for ") +
+                   String((unsigned long) g_settings_ptr->max_runtime_sec) + "s).";
+        }
         return String("Watering complete.");
     }
 
@@ -653,14 +657,6 @@ public:
             if (g_controller_ptr->halted()) {
                 s += "\nHALTED — send /resume to re-enable watering";
             }
-            int skips = g_controller_ptr->consecutiveSkipsWet();
-            if (skips > 0) {
-                s += "\nskip-wet streak: ";
-                s += String(skips);
-                if (skips >= CONSECUTIVE_SKIPS_WET_ALERT_THRESHOLD) {
-                    s += " (alert — sensor may be stuck)";
-                }
-            }
         } else {
             s += "(controller not ready)";
         }
@@ -701,8 +697,8 @@ public:
             s += "s";
         }
 
-        // ----- Soil -----
-        s += "\n\n<b>Soil</b>\n";
+        // ----- Soil (monitoring-only since v1.2.3) -----
+        s += "\n\n<b>Soil</b> (monitoring only)\n";
         int raw = Moisture::readAveragedRaw();
         if (g_settings_ptr) {
             int pct = Moisture::pctFromCalibration(
@@ -715,16 +711,7 @@ public:
             }
             s += "(raw ";
             s += String(raw);
-            s += ", threshold ";
-            s += String(g_settings_ptr->soil_threshold);
-            if (raw < g_settings_ptr->soil_threshold) {
-                s += " — wet, next cycle will skip";
-            }
             s += ")";
-            if (g_settings_ptr->calibration_dry == 0 &&
-                g_settings_ptr->calibration_wet == 0) {
-                s += "\nnot calibrated — run /calibrate_dry and /calibrate_wet";
-            }
         } else {
             s += "raw ";
             s += String(raw);
