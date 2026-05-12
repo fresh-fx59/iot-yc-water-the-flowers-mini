@@ -42,7 +42,6 @@ the bot says "must be 1..30 days", that exact range is enforced in code.
 | `/halt` | Block all watering (manual, scheduled, /water). Persists in RAM only - lost on reboot. | `Halted. /resume to re-enable schedule.` |
 | `/resume` | Lift halt, re-enable scheduled and manual watering. | `Resumed.` |
 | `/reset_overflow` | Clear the overflow latch in both the controller and the persisted state. Rearms scheduling. | `Overflow latch cleared.` |
-| `/overflow_status` | Print latched/streak and the current raw GPIO read of the overflow sensor. | `overflow latched=no streak=0 raw=1` |
 | `/reinit_gpio` | Re-run pinMode + idle-level write on motor pin and overflow pin. Useful if a relay gets stuck. | `GPIO reinit complete.` |
 
 ### Settings (persisted to LittleFS at `/settings.json`)
@@ -140,9 +139,9 @@ same nginx endpoint regardless of which backend is broken.
 
 1. **First** - inspect the floor. Find the leak. Wipe the rain-drop
    sensor (the latch will not clear while the sensor is still wet).
-2. Send `/overflow_status` and confirm `raw=1` (dry). If it is still
-   `raw=0`, the sensor is still wet or shorted - the latch will
-   immediately re-trip if you reset it.
+2. Send `/status` and inspect `overflow.raw_value`. Confirm it reads
+   `1` (dry). If it is still `0`, the sensor is still wet or shorted -
+   the latch will immediately re-trip if you reset it.
 3. Send `/reset_overflow`. The bot replies `Overflow latch cleared.`
 4. Send `/status` and confirm `overflow_latched=no`.
 5. Send `/water` to verify the device is operational.

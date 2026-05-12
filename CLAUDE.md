@@ -62,7 +62,8 @@ All logic lives in `include/*.h` as inline headers. `src/main.cpp` is the only T
 - `TelegramNotifier.h` — bot dispatcher, command handlers, formatters, inline menu, proxy/cooldown plumbing
 - `MetricsPusher.h` — Prometheus push + Loki log push (Core 0)
 - `DebugHelper.h` — log helper; routes to Loki via `g_metricsLog` callback
-- `DS3231RTC.h` — RTC driver, sole time source (no NTP)
+- `DS3231RTC.h` — RTC driver, free-running time source (NTP only used as a one-shot setter via `/settime`)
+- `NtpHelper.h` — `syncFromPool()` helper invoked by `/settime` (no-arg) to set the RTC from `ru.pool.ntp.org`
 - `api_handlers.h` — HTTP API (inline namespace), registered via `registerApiHandlers()`
 - `ota.h` — local HTTP OTA + WebServer + static file routing (mother, unchanged)
 - `FirmwareUpdater.h` — Telegram-driven remote OTA with app-level auto-rollback. Pure decision core (`decideUpdate`/`decideTrialAction`/`parseManifest`/`compareVersion`) is unit-tested; hardware-bound entries (`checkAndApply`, `rollbackToOtherPartition`, `handleBootTrial`, `loopHealthCheck`) call `Update.h`, `esp_ota_*`, mbedtls, and Preferences (NVS).
@@ -130,7 +131,7 @@ All external services run on a single VPS, reused unchanged from the mother. SSH
 ## Telegram
 
 **Commands** (from `TelegramNotifier::getHelpText`, 23 total):
-- **Control**: `/menu`, `/help`, `/water`, `/stop`, `/status`, `/halt`, `/resume`, `/reset_overflow`, `/overflow_status`, `/reinit_gpio`
+- **Control**: `/menu`, `/help`, `/water`, `/stop`, `/status`, `/halt`, `/resume`, `/reset_overflow`, `/reinit_gpio`
 - **Settings**: `/set_interval <days>` (1..30), `/set_time HH:MM`, `/set_runtime <sec>` (10..600), `/set_threshold <raw>` (0..4095), `/calibrate_wet`, `/calibrate_dry`
 - **Time**: `/time`, `/settime [YYYY-MM-DD HH:MM:SS]` (UTC)
 - **Diagnostics**: `/test_motor <sec>` (1..10), `/test_sensor`
@@ -187,7 +188,7 @@ All external services run on a single VPS, reused unchanged from the mother. SSH
 - `POST /api/calibrate?ref=wet|dry` — capture current raw reading, recompute midpoint threshold
 - `GET  /api/test_sensor` — single soil raw read
 - `POST /api/test_motor?seconds=N` — pulse motor 1..10s (blocking)
-- `/firmware` — HTTP OTA (basic auth: admin / `OTA_PASSWORD`)
+- `/firmware` — local HTTP OTA push (basic auth: `OTA_USER` / `OTA_PASSWORD` from `secret.h`). Pull-style remote OTA goes through Telegram `/check_update` or `POST /api/check_update` instead.
 
 ## Hardware
 
@@ -249,7 +250,7 @@ Server setup: `tools/nginx-firmware-snippet.conf` is a drop-in `location /v1/fir
 7. Overflow latch is **persistent** across reboots (in `/state.json`). Halt mode is **not**.
 8. `Timeout` and `Aborted` events do NOT advance `last_run_unix` — the schedule retries on the next slot.
 9. `Settings::deriveThreshold` only runs on `/api/calibrate` and `/calibrate_wet|dry`. `/api/settings POST` and `/set_threshold` preserve user-supplied threshold verbatim.
-10. DS3231 is sole time source (no NTP). Install CR2032 backup battery before first power-on. System TZ pinned to UTC0 in `setup()` — `/settime` and `/time` are UTC.
+10. DS3231 is the free-running time source. NTP is used only as a one-shot setter via `/settime` (no-arg → `NtpHelper::syncFromPool("ru.pool.ntp.org")` writes the RTC). Install CR2032 backup battery before first power-on. System TZ pinned to UTC0 in `setup()` — `/settime` and `/time` are UTC.
 11. millis() overflow ~49 days is handled by unsigned subtraction throughout.
 12. WiFi reconnection in `NetworkManager` uses `WiFi.disconnect(true)` before `WiFi.begin()` — omitting cleanup corrupts the ESP32 WiFi driver.
 13. Overflow sensor uses software debouncing (5 LOW reads of last 7) to filter electrical noise; trip latency ~50ms at the 10ms loop cadence.
