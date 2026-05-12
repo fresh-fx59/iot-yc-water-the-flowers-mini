@@ -93,10 +93,10 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), device)",
+          "query": "label_values(esp32_motor_on{job=\"esp32_watering\"}, device)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), device)",
+        "definition": "label_values(esp32_motor_on{job=\"esp32_watering\"}, device)",
         "refresh": 1,
         "sort": 1,
         "multi": true,
@@ -111,7 +111,7 @@
             "$__all"
           ]
         },
-        "regex": "",
+        "regex": "/^watering /",
         "hide": 0
       },
       {
@@ -124,10 +124,10 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), instance)",
+          "query": "label_values(esp32_motor_on{job=\"esp32_watering\"}, instance)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), instance)",
+        "definition": "label_values(esp32_motor_on{job=\"esp32_watering\"}, instance)",
         "refresh": 1,
         "sort": 1,
         "multi": true,
