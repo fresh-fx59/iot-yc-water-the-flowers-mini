@@ -251,7 +251,11 @@ def _emit_mother_shape(b: _Builder, dev_label: str, data: dict) -> None:
 
     for valve in data.get("valves", []) or []:
         vid = str(valve.get("id", "?"))
-        valve_labels = f'{dev_label},valve="{_escape_label_value(vid)}"'
+        valve_only = f'valve="{_escape_label_value(vid)}"'
+        # Only prepend the device label when it's non-empty; otherwise we'd
+        # emit `{,valve="0"}` and Prometheus rejects the whole scrape with
+        # `expected label name, got ","` — taking down the mother dashboard.
+        valve_labels = f'{dev_label},{valve_only}' if dev_label else valve_only
         for metric_name, mtype, help_text, field in _MOTHER_PER_VALVE:
             if field in valve:
                 b.metric(metric_name, mtype, help_text, valve[field], valve_labels)
