@@ -587,12 +587,26 @@ public:
 
     // Multi-line dump of /status — pulls fresh data from globals; null-checks
     // each pointer because boot may dispatch /status before setup() finishes.
+    // Format a unix timestamp as "YYYY-MM-DD HH:MM:SS" in UTC. Pairs with
+    // formatRtcTime() (which formats `now`).
+    static String formatUtc(time_t t) {
+        if (t <= 0) return String("never");
+        struct tm tm_buf;
+        gmtime_r(&t, &tm_buf);
+        char buffer[24];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm_buf);
+        return String(buffer);
+    }
+
     static String formatStatus() {
         String s;
 
-        // Identity — which bot is this device talking to? Useful when
-        // the fleet has multiple devices on different bots.
-        s += "identity=";
+        // Firmware / identity header — which build is running, and which bot
+        // it talks to. Useful when the fleet has multiple devices on
+        // different bots.
+        s += "firmware=";
+        s += FIRMWARE_VERSION;
+        s += "\nidentity=";
         s += DeviceToken::label();
         s += "\nbot_token=";
         s += DeviceToken::tokenPreview();
@@ -617,12 +631,31 @@ public:
             s += g_controller_ptr->halted() ? "yes" : "no";
             s += "\nconsecutive_skips_wet=";
             s += String(g_controller_ptr->consecutiveSkipsWet());
-            s += "\nlast_run_unix=";
-            s += String((long)g_controller_ptr->lastRunUnix());
-            s += "\nnext_run_unix=";
-            s += String((long)g_controller_ptr->nextRunUnix());
+            s += "\nlast_run_at=";
+            s += formatUtc((time_t) g_controller_ptr->lastRunUnix());
+            if (g_controller_ptr->lastRunUnix() > 0) s += " UTC";
+            s += "\nnext_run_at=";
+            s += formatUtc((time_t) g_controller_ptr->nextRunUnix());
+            if (g_controller_ptr->nextRunUnix() > 0) s += " UTC";
         } else {
             s += "\ncontroller=unavailable";
+        }
+
+        // Schedule shape — interval + daily slot + per-cycle cap. Lets the
+        // user understand at a glance "when is the next pour, and for how
+        // long can the pump run before timeout".
+        if (g_settings_ptr) {
+            char hhmm[8];
+            snprintf(hhmm, sizeof(hhmm), "%02d:%02d",
+                     g_settings_ptr->schedule_hour,
+                     g_settings_ptr->schedule_minute);
+            s += "\nschedule_every_days=";
+            s += String(g_settings_ptr->interval_days);
+            s += "\nschedule_time=";
+            s += hhmm;
+            s += " UTC";
+            s += "\nmax_runtime_sec=";
+            s += String((unsigned long) g_settings_ptr->max_runtime_sec);
         }
 
         // Soil reading + threshold

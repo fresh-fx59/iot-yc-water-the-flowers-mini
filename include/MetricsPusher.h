@@ -11,6 +11,7 @@
 #include "Settings.h"
 #include "WateringController.h"
 #include "OverflowSensor.h"
+#include "DeviceToken.h"
 
 // ---------------------------------------------------------------------------
 // Phase 9 globals (defined in src/main.cpp). Used by buildMetricsJson() so the
@@ -207,7 +208,11 @@ inline String MetricsPusher::buildMetricsJson() {
     String json = "{";
 
     // ---- Device-wide ----
-    json += "\"device\":\"mini\"";
+    // Use DeviceToken::label() so each bot reports its own identity. The
+    // server-side proxy keys per-device snapshots by this field, and the
+    // Grafana multi-device dashboard filters via `$device`.
+    json += "\"device\":\"" + String(DeviceToken::label()) + "\"";
+    json += ",\"firmware\":\"" + String(FIRMWARE_VERSION) + "\"";
     json += ",\"uptime_ms\":" + String(millis());
     json += ",\"rssi\":" + String(WiFi.RSSI());
 
@@ -324,7 +329,7 @@ inline String MetricsPusher::buildLogsJson() {
         if (groups[g].count == 0) continue;
         if (!first) json += ",";
         first = false;
-        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"mini\",\"level\":\"" + groups[g].level + "\"},";
+        json += "{\"stream\":{\"job\":\"esp32\",\"device\":\"" + String(DeviceToken::label()) + "\",\"level\":\"" + groups[g].level + "\"},";
         json += "\"values\":[" + groups[g].values + "]}";
     }
     json += "]}";
