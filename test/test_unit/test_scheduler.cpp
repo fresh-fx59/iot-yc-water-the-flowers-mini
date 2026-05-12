@@ -14,6 +14,18 @@ static time_t at(int year, int mon, int day, int h, int m) {
     return timegm(&t);  // POSIX-extension; available on darwin, linux, ESP newlib
 }
 
+static void test_ancient_last_run_treated_as_first_run() {
+    // Regression: persisted /state.json from when RTC was at epoch wrote a
+    // 1999-era last_run_unix. Without the sanity floor the scheduler would
+    // compute next_run = 1999 + 4 days, leaving it permanently in the past
+    // and stuck in SKIP_RECOMPUTE. With the floor it should compute as if
+    // last_run were 0 and pick today's HH:MM (or tomorrow's).
+    time_t now = at(2026, 5, 12, 6, 30);      // 2026-05-12 06:30 UTC
+    time_t ancient = at(1999, 9, 30, 3, 0);   // 943920000
+    time_t next = Scheduler::computeNextRun(now, ancient, 4, 7, 0);
+    TEST_ASSERT_EQUAL_INT64(at(2026, 5, 12, 7, 0), next);
+}
+
 static void test_first_run_picks_next_07_00_today_if_future() {
     // now = 2026-05-05 06:30 UTC, last_run = 0, schedule = 07:00
     time_t now = at(2026, 5, 5, 6, 30);
@@ -66,6 +78,7 @@ static void test_should_fire_now_skips_at_grace_boundary() {
 }
 
 void register_scheduler_tests() {
+    RUN_TEST(test_ancient_last_run_treated_as_first_run);
     RUN_TEST(test_first_run_picks_next_07_00_today_if_future);
     RUN_TEST(test_first_run_picks_07_00_tomorrow_if_past_today);
     RUN_TEST(test_subsequent_run_adds_interval);

@@ -328,15 +328,27 @@ def _build_prometheus_metrics() -> str:
     for device, snap in sorted(snapshots.items()):
         data = snap.get("data", {})
         ts = snap.get("ts", 0)
-        dev_label = f'device="{_escape_label_value(device)}"'
+
+        is_mini = any(k in data for k in ("motor_on", "soil_raw", "overflow_latched"))
+        is_mother = any(k in data for k in ("valves", "pump", "water_tank_ok"))
+
+        # IMPORTANT: mother-shape payloads predate the multi-device design and
+        # were always exposed without a `device` Prometheus label. The legacy
+        # mother dashboard ("ESP32 Watering System") has bare Stat/Gauge
+        # panels that query e.g. `esp32_wifi_rssi_dbm{job="esp32_watering"}`
+        # and expect a SINGLE series. Adding a device label would multiply
+        # those queries into N series and break the panels.
+        # Mini-shape payloads always carry `device="<label>"`.
+        if is_mini:
+            dev_label = f'device="{_escape_label_value(device)}"'
+        else:
+            dev_label = ""
 
         _emit_common(b, dev_label, data, ts)
 
-        # Shape detection — payloads can be either shape (or eventually both
-        # if a future device emits a hybrid; that's fine, we just emit both).
-        if "valves" in data or "pump" in data or "water_tank_ok" in data:
+        if is_mother:
             _emit_mother_shape(b, dev_label, data)
-        if "motor_on" in data or "soil_raw" in data or "overflow_latched" in data:
+        if is_mini:
             _emit_mini_shape(b, dev_label, data)
 
     return "\n".join(b.lines) + "\n"

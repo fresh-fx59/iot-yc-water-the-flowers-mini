@@ -587,105 +587,172 @@ public:
 
     // Multi-line dump of /status — pulls fresh data from globals; null-checks
     // each pointer because boot may dispatch /status before setup() finishes.
-    // Format a unix timestamp as "YYYY-MM-DD HH:MM:SS" in UTC. Pairs with
-    // formatRtcTime() (which formats `now`).
-    static String formatUtc(time_t t) {
-        if (t <= 0) return String("never");
+    // Sanity floor — same value as Scheduler::LAST_RUN_UNIX_SANITY_FLOOR.
+    // Persisted last_run before this is treated as "no real run yet" and
+    // displayed as "never" rather than a 1999 date.
+    static const time_t TIMESTAMP_SANITY_FLOOR = 1700000000;
+
+    // Format a unix timestamp as "YYYY-MM-DD HH:MM" UTC. Used inside
+    // formatRelTime to qualify the relative phrase ("in 2d 1h (date)").
+    static String formatUtcShort(time_t t) {
+        if (t < TIMESTAMP_SANITY_FLOOR) return String("never");
         struct tm tm_buf;
         gmtime_r(&t, &tm_buf);
         char buffer[24];
-        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm_buf);
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", &tm_buf);
         return String(buffer);
     }
 
+    // "in 2d 1h", "3h 5m ago", "now", "never". Bogus timestamps (epoch-era
+    // junk left in /state.json from before the RTC was set) report "never".
+    static String formatRelTime(time_t target, time_t now) {
+        if (target < TIMESTAMP_SANITY_FLOOR) return String("never");
+        long delta = (long) target - (long) now;
+        bool future = delta >= 0;
+        long abs_s = delta < 0 ? -delta : delta;
+        if (abs_s < 30) return String("just now");
+        long d = abs_s / 86400; abs_s %= 86400;
+        long h = abs_s / 3600;  abs_s %= 3600;
+        long m = abs_s / 60;
+        String unit;
+        if (d > 0) {
+            unit = String(d) + "d";
+            if (h > 0) unit += " " + String(h) + "h";
+        } else if (h > 0) {
+            unit = String(h) + "h";
+            if (m > 0) unit += " " + String(m) + "m";
+        } else {
+            unit = String(m) + "m";
+        }
+        return future ? (String("in ") + unit) : (unit + String(" ago"));
+    }
+
+    // /status output. Telegram parse_mode=HTML so <b>...</b> renders as bold.
+    // Goals: keep it short, lead with what changes most often, fall through
+    // to diagnostics at the bottom. "never" appears for any timestamp that
+    // looks like persisted junk (rtc-was-at-epoch fallout).
     static String formatStatus() {
         String s;
+        time_t now = DS3231RTC::getTime();
 
-        // Firmware / identity header — which build is running, and which bot
-        // it talks to. Useful when the fleet has multiple devices on
-        // different bots.
-        s += "firmware=";
-        s += FIRMWARE_VERSION;
-        s += "\nidentity=";
+        // ----- Header: device + firmware + clock -----
+        s += "<b>";
         s += DeviceToken::label();
-        s += "\nbot_token=";
-        s += DeviceToken::tokenPreview();
-        s += " (set_by=";
-        s += DeviceToken::setBy();
-        s += ")";
-
-        // Time — UTC because the system TZ is pinned to UTC0 (main.cpp:285).
-        s += "\ntime=";
+        s += " — v";
+        s += FIRMWARE_VERSION;
+        s += "</b>\n";
         s += formatRtcTime();
         s += " UTC";
 
-        // State + motor
+        // ----- State -----
+        s += "\n\n<b>State</b>\n";
         if (g_controller_ptr) {
             const bool watering =
                 g_controller_ptr->state() == WateringState::WATERING;
-            s += "\nstate=";
-            s += watering ? "WATERING" : "IDLE";
-            s += "\nmotor=";
-            s += watering ? "on" : "off";
-            s += "\nhalted=";
-            s += g_controller_ptr->halted() ? "yes" : "no";
-            s += "\nconsecutive_skips_wet=";
-            s += String(g_controller_ptr->consecutiveSkipsWet());
-            s += "\nlast_run_at=";
-            s += formatUtc((time_t) g_controller_ptr->lastRunUnix());
-            if (g_controller_ptr->lastRunUnix() > 0) s += " UTC";
-            s += "\nnext_run_at=";
-            s += formatUtc((time_t) g_controller_ptr->nextRunUnix());
-            if (g_controller_ptr->nextRunUnix() > 0) s += " UTC";
+            s += watering ? "watering now (pump on)" : "idle (pump off)";
+            if (g_controller_ptr->halted()) {
+                s += "\nHALTED — send /resume to re-enable watering";
+            }
+            int skips = g_controller_ptr->consecutiveSkipsWet();
+            if (skips > 0) {
+                s += "\nskip-wet streak: ";
+                s += String(skips);
+                if (skips >= CONSECUTIVE_SKIPS_WET_ALERT_THRESHOLD) {
+                    s += " (alert — sensor may be stuck)";
+                }
+            }
         } else {
-            s += "\ncontroller=unavailable";
+            s += "(controller not ready)";
         }
 
-        // Schedule shape — interval + daily slot + per-cycle cap. Lets the
-        // user understand at a glance "when is the next pour, and for how
-        // long can the pump run before timeout".
-        if (g_settings_ptr) {
+        // ----- Schedule -----
+        if (g_controller_ptr && g_settings_ptr) {
             char hhmm[8];
             snprintf(hhmm, sizeof(hhmm), "%02d:%02d",
                      g_settings_ptr->schedule_hour,
                      g_settings_ptr->schedule_minute);
-            s += "\nschedule_every_days=";
+            s += "\n\n<b>Schedule</b>\n";
+            s += "every ";
             s += String(g_settings_ptr->interval_days);
-            s += "\nschedule_time=";
+            s += " day";
+            if (g_settings_ptr->interval_days != 1) s += "s";
+            s += " at ";
             s += hhmm;
             s += " UTC";
-            s += "\nmax_runtime_sec=";
+
+            time_t last = (time_t) g_controller_ptr->lastRunUnix();
+            time_t next = (time_t) g_controller_ptr->nextRunUnix();
+            s += "\nlast watering: ";
+            s += formatRelTime(last, now);
+            if (last >= TIMESTAMP_SANITY_FLOOR) {
+                s += " (";
+                s += formatUtcShort(last);
+                s += " UTC)";
+            }
+            s += "\nnext watering: ";
+            s += formatRelTime(next, now);
+            if (next >= TIMESTAMP_SANITY_FLOOR) {
+                s += " (";
+                s += formatUtcShort(next);
+                s += " UTC)";
+            }
+            s += "\npump runtime cap: ";
             s += String((unsigned long) g_settings_ptr->max_runtime_sec);
+            s += "s";
         }
 
-        // Soil reading + threshold
-        s += "\nsoil_raw=";
+        // ----- Soil -----
+        s += "\n\n<b>Soil</b>\n";
         int raw = Moisture::readAveragedRaw();
-        s += String(raw);
         if (g_settings_ptr) {
-            s += "\nsoil_threshold=";
-            s += String(g_settings_ptr->soil_threshold);
             int pct = Moisture::pctFromCalibration(
                 raw,
                 g_settings_ptr->calibration_wet,
                 g_settings_ptr->calibration_dry);
             if (pct >= 0) {
-                s += "\nsoil_pct=";
                 s += String(pct);
+                s += "% wet ";
+            }
+            s += "(raw ";
+            s += String(raw);
+            s += ", threshold ";
+            s += String(g_settings_ptr->soil_threshold);
+            if (raw < g_settings_ptr->soil_threshold) {
+                s += " — wet, next cycle will skip";
+            }
+            s += ")";
+            if (g_settings_ptr->calibration_dry == 0 &&
+                g_settings_ptr->calibration_wet == 0) {
+                s += "\nnot calibrated — run /calibrate_dry and /calibrate_wet";
+            }
+        } else {
+            s += "raw ";
+            s += String(raw);
+        }
+
+        // ----- Overflow sensor -----
+        if (g_overflow_ptr) {
+            s += "\n\n<b>Overflow sensor</b>\n";
+            int live = digitalRead(OVERFLOW_SENSOR_DO_PIN);
+            if (g_overflow_ptr->latched()) {
+                s += "LATCHED — water detected; /reset_overflow to clear";
+            } else {
+                s += (live == HIGH ? "dry" : "wet");
+                int streak = g_overflow_ptr->triggerStreak();
+                if (streak > 0) {
+                    s += " (debounce streak ";
+                    s += String(streak);
+                    s += ")";
+                }
             }
         }
 
-        // Overflow — `overflow_raw` is the live pin level (1=dry, 0=wet);
-        // included here so users don't need /overflow_status as a separate
-        // command. /overflow_status was removed in v1.0.7.
-        if (g_overflow_ptr) {
-            s += "\noverflow_latched=";
-            s += g_overflow_ptr->latched() ? "yes" : "no";
-            s += "\noverflow_streak=";
-            s += String(g_overflow_ptr->triggerStreak());
-            s += "\noverflow_raw=";
-            s += String(digitalRead(OVERFLOW_SENSOR_DO_PIN));
-        }
+        // ----- Bot identity (bottom — least likely to change) -----
+        s += "\n\n<b>Bot</b>\n";
+        s += DeviceToken::tokenPreview();
+        s += " (";
+        s += DeviceToken::setBy();
+        s += ")";
 
         return s;
     }
