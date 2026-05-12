@@ -20,11 +20,26 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import socket
 import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
+
+
+# Mask bot tokens that appear in URLs/log lines. Telegram tokens have the form
+# <bot_id>:<secret>; we keep the first 4 chars (enough to identify which bot
+# without exposing the secret) and replace the rest with `***`.
+_BOT_TOKEN_RE = re.compile(r"bot_token=([^&\s\"]+)", re.IGNORECASE)
+
+
+def _mask_bot_tokens(text: str) -> str:
+    def _sub(match: "re.Match[str]") -> str:
+        val = match.group(1)
+        head = val[:4] if len(val) >= 4 else "?"
+        return f"bot_token={head}***"
+    return _BOT_TOKEN_RE.sub(_sub, text)
 
 
 HOST = os.getenv("TELEGRAM_PROXY_HOST", "0.0.0.0")
@@ -209,7 +224,8 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 502, {"ok": False, "error": f"Upstream error: {exc}"})
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
-        print(f"[telegram-proxy] {self.address_string()} - {fmt % args}")
+        rendered = _mask_bot_tokens(fmt % args)
+        print(f"[telegram-proxy] {self.address_string()} - {rendered}")
 
 
 def main() -> None:
