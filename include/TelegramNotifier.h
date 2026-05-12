@@ -29,6 +29,7 @@ extern Settings*           g_settings_ptr;
 extern OverflowSensor*     g_overflow_ptr;
 extern void                queueTelegramNotification(const String& message);
 extern void                recomputeNextRun();
+extern bool                persistState();
 // Firmware update hooks — implemented in src/main.cpp as thin shims into
 // FirmwareUpdater. The shim keeps TelegramNotifier.h free of the
 // HTTPClient/Update.h/esp_ota_* header dependency chain.
@@ -880,6 +881,7 @@ public:
         }
         g_controller_ptr->setOverflowLatched(false);
         g_overflow_ptr->reset();
+        persistState();
         sendMessage(formatOverflowReset());
     }
 
@@ -945,7 +947,11 @@ public:
         }
         g_settings_ptr->interval_days = days;
         saveSettings(*g_settings_ptr);
-        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        if (g_controller_ptr) {
+            g_controller_ptr->updateSettings(*g_settings_ptr);
+            recomputeNextRun();
+            persistState();
+        }
         sendMessage(String("interval=") + String(days) + " days");
     }
 
@@ -965,7 +971,11 @@ public:
         g_settings_ptr->schedule_hour = h;
         g_settings_ptr->schedule_minute = m;
         saveSettings(*g_settings_ptr);
-        if (g_controller_ptr) g_controller_ptr->updateSettings(*g_settings_ptr);
+        if (g_controller_ptr) {
+            g_controller_ptr->updateSettings(*g_settings_ptr);
+            recomputeNextRun();
+            persistState();
+        }
         char buf[6];
         snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
         sendMessage(String("schedule=") + buf);

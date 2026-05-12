@@ -59,6 +59,9 @@ REMOTE_URL="/v1/firmware/${REMOTE_BIN_NAME}"
 
 # Build manifest locally — JSON without external deps.
 TMP_MANIFEST="$(mktemp -t fw-manifest.XXXXXX.json)"
+# mktemp creates 600; nginx runs as www-data and needs read access after scp
+# preserves the mode. Make the manifest world-readable before upload.
+chmod 644 "$TMP_MANIFEST"
 trap 'rm -f "$TMP_MANIFEST"' EXIT
 
 if [[ -n "$NOTES" ]]; then

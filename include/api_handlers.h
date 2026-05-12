@@ -172,6 +172,7 @@ inline void api_settings_post() {
     saveSettings(*g_settings_ptr);
     g_controller_ptr->updateSettings(*g_settings_ptr);
     recomputeNextRun();
+    persistState();
     httpServer.send(200, "application/json", "{\"ok\":true}");
 }
 

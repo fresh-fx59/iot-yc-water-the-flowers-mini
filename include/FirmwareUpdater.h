@@ -31,6 +31,11 @@
 // Defined in src/main.cpp. We avoid pulling main.cpp's full set of externs.
 extern WateringController* g_controller_ptr;
 extern void queueTelegramNotification(const String& msg);
+// Drain the cross-core notification queue inline. Safe to call from Core 0
+// (networkTask), which is also the queue's normal drainer. Used by the OTA
+// flow to flush progress messages before ESP.restart() — otherwise everything
+// queued during checkAndApply / rollback paths is lost on reboot.
+extern void processPendingNotifications();
 #endif
 
 class FirmwareUpdater {
@@ -252,13 +257,14 @@ public:
             queueTelegramNotification(
                 String("Update health check timed out, rolling back from v") +
                 s_trialVersion + "...");
+            processPendingNotifications();
             // Don't clear NVS — let the next boot's handleBootTrial detect
             // RolledBack from target_label != running_label and emit the
             // rollback notification.
             const esp_partition_t* other = esp_ota_get_next_update_partition(NULL);
             if (other) esp_ota_set_boot_partition(other);
             s_trialArmed = false;
-            delay(2000);   // allow Telegram queue + send
+            delay(500);    // small pause after explicit flush
             ESP.restart();
         }
     }
@@ -266,6 +272,7 @@ public:
     // Entry from Telegram /check_update [force].
     static void checkAndApply(bool force) {
         queueTelegramNotification(String("Checking for update..."));
+        processPendingNotifications();
 
         if (!WiFi.isConnected()) {
             queueTelegramNotification("Update failed: WiFi not connected.");
@@ -319,6 +326,7 @@ public:
                           String(m.size / 1024) + " KB).";
         if (m.notes.length() > 0) announce += " Notes: " + m.notes;
         queueTelegramNotification(announce);
+        processPendingNotifications();
 
         {
             Preferences prefs;
@@ -374,17 +382,22 @@ public:
             return;
         }
 
+        queueTelegramNotification("Downloaded + verified. Flashing...");
+        processPendingNotifications();
+
         // ---- 6. Commit + reboot --------------------------------------------
         if (!Update.end(true)) {
             clearTrialNvs();
             queueTelegramNotification(String("Update failed: Update.end (err ") +
                                       Update.getError() + ").");
+            processPendingNotifications();
             return;
         }
         queueTelegramNotification(String("Flashed v") + m.version + ", rebooting...");
+        processPendingNotifications();
         Serial.printf("[FirmwareUpdater] Flashed v%s on %s, restarting\n",
                       m.version.c_str(), target->label);
-        delay(1500);   // allow queued Telegram messages to send
+        delay(500);   // small belt-and-suspenders pause after explicit flush
         ESP.restart();
     }
 
@@ -404,9 +417,10 @@ public:
             }
         }
         queueTelegramNotification("Rolling back to other partition...");
+        processPendingNotifications();
         Serial.printf("[FirmwareUpdater] Manual rollback to %s\n", other->label);
         esp_ota_set_boot_partition(other);
-        delay(1000);
+        delay(500);
         ESP.restart();
     }
 

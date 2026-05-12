@@ -82,8 +82,26 @@ OverflowSensor*     g_overflow_ptr   = &g_overflow;
 // with strdup; Core 0 frees after sending.
 QueueHandle_t notificationQueue = nullptr;
 
-// Telegram long-poll cursor — stateful across networkTask iterations.
+// Telegram long-poll cursor — persisted to NVS so it survives reboot.
+// Why persisted: without it, every reboot resets the cursor to 0 and
+// getUpdates(0) replays the oldest unconfirmed update. A device that reboots
+// while processing /check_update force will pull the same command on next
+// boot → re-applies the OTA → reboots → infinite loop (v1.2.5 had this).
 static int s_telegramLastUpdateId = 0;
+
+static void saveTelegramOffset(int v) {
+    Preferences p;
+    if (!p.begin("tg", false)) return;
+    p.putInt("last_id", v);
+    p.end();
+}
+
+static void loadTelegramOffsetAtBoot() {
+    Preferences p;
+    if (!p.begin("tg", true)) return;
+    s_telegramLastUpdateId = p.getInt("last_id", 0);
+    p.end();
+}
 
 // First-loop guard: drives boot-time scheduling decision once.
 static bool s_first_loop = true;
@@ -271,7 +289,14 @@ void networkTask(void* /*pvParameters*/) {
             httpServer.handleClient();
 
             // Telegram inbound (long-poll, returns ASAP if no message).
+            // Save the advanced offset to NVS BEFORE processCommand so that
+            // commands which end in ESP.restart (/check_update, /set_token,
+            // /factory_reset_telegram) don't lose the cursor and replay.
+            int prev_id = s_telegramLastUpdateId;
             String cmd = TelegramNotifier::checkForCommands(s_telegramLastUpdateId, 0);
+            if (s_telegramLastUpdateId != prev_id) {
+                saveTelegramOffset(s_telegramLastUpdateId);
+            }
             if (cmd.length() > 0) {
                 TelegramNotifier::processCommand(cmd);
             }
@@ -382,6 +407,13 @@ void setup() {
     g_overflow.setLatched(ps.overflow_latched);
 
     recomputeNextRun();
+
+    // ----- Telegram long-poll cursor (persisted) -----
+    // Load offset from NVS. If absent (fresh firmware or first ever boot),
+    // s_telegramFirstBoot stays true so networkTask will drain the stale
+    // Telegram queue before processing new commands. See comment on the
+    // s_telegramLastUpdateId definition for the reboot-loop history.
+    loadTelegramOffsetAtBoot();
 
     // ----- Cross-core queue -----
     notificationQueue = xQueueCreate(NOTIFICATION_QUEUE_SIZE, sizeof(char*));
