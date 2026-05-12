@@ -14,12 +14,21 @@
   "timezone": "Europe/Moscow",
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "tags": ["esp32", "watering", "iot", "mini", "multi-device"],
+  "tags": [
+    "esp32",
+    "watering",
+    "iot",
+    "mini",
+    "multi-device"
+  ],
   "annotations": {
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -28,35 +37,44 @@
       },
       {
         "name": "Watering starts",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "enable": true,
         "hide": false,
         "iconColor": "rgba(0, 200, 100, 1)",
-        "expr": "changes(esp32_motor_on{job=\"esp32_watering_mini\",device=~\"$device\"}[1m]) > 0 and esp32_motor_on{job=\"esp32_watering_mini\",device=~\"$device\"} == 1",
+        "expr": "changes(esp32_motor_on{job=\"esp32_watering\",device=~\"$device\"}[1m]) > 0 and esp32_motor_on{job=\"esp32_watering\",device=~\"$device\"} == 1",
         "step": "1m",
         "titleFormat": "watering started ({{device}})",
-        "textFormat": "motor_on 0 → 1",
+        "textFormat": "motor_on 0 \u2192 1",
         "tagKeys": "device"
       },
       {
         "name": "Overflow trips",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "enable": true,
         "hide": false,
         "iconColor": "rgba(220, 0, 0, 1)",
-        "expr": "changes(esp32_overflow_latched{job=\"esp32_watering_mini\",device=~\"$device\"}[1m]) > 0 and esp32_overflow_latched{job=\"esp32_watering_mini\",device=~\"$device\"} == 1",
+        "expr": "changes(esp32_overflow_latched{job=\"esp32_watering\",device=~\"$device\"}[1m]) > 0 and esp32_overflow_latched{job=\"esp32_watering\",device=~\"$device\"} == 1",
         "step": "1m",
         "titleFormat": "overflow latched ({{device}})",
-        "textFormat": "L1 safety — motor forced off",
+        "textFormat": "L1 safety \u2014 motor forced off",
         "tagKeys": "device"
       },
       {
         "name": "Reboots",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
         "enable": true,
         "hide": false,
         "iconColor": "rgba(255, 165, 0, 1)",
-        "expr": "resets(esp32_uptime_ms{job=\"esp32_watering_mini\",device=~\"$device\"}[5m]) > 0",
+        "expr": "resets(esp32_uptime_ms{job=\"esp32_watering\",device=~\"$device\"}[5m]) > 0",
         "step": "1m",
         "titleFormat": "reboot ({{device}})",
         "textFormat": "uptime counter reset",
@@ -70,15 +88,29 @@
         "name": "device",
         "label": "Device",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": { "query": "label_values(esp32_motor_on{job=\"esp32_watering_mini\"}, device)", "refId": "StandardVariableQuery" },
-        "definition": "label_values(esp32_motor_on{job=\"esp32_watering_mini\"}, device)",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), device)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), device)",
         "refresh": 1,
         "sort": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".*",
-        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "regex": "",
         "hide": 0
       },
@@ -87,15 +119,29 @@
         "label": "Instance (fallback)",
         "description": "Use if device labels collide. Backed by Prometheus scrape target.",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": { "query": "label_values(esp32_motor_on{job=\"esp32_watering_mini\"}, instance)", "refId": "StandardVariableQuery" },
-        "definition": "label_values(esp32_motor_on{job=\"esp32_watering_mini\"}, instance)",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "definition": "label_values(last_over_time(esp32_motor_on{job=\"esp32_watering\"}[15m]), instance)",
         "refresh": 1,
         "sort": 1,
         "multi": true,
         "includeAll": true,
         "allValue": ".*",
-        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "regex": "",
         "hide": 0
       }
@@ -107,17 +153,36 @@
       "type": "row",
       "title": "Current State ($device)",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
     },
     {
       "id": 1,
       "type": "stat",
       "title": "Motor",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
       "description": "Pump relay state. Green=off, blue=watering.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "auto",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -126,21 +191,47 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "OFF", "color": "green" }, "1": { "text": "ON", "color": "blue" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "OFF",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "ON",
+                  "color": "blue"
+                }
+              }
+            }
           ],
           "thresholds": {
             "mode": "absolute",
-            "steps": [ { "color": "green", "value": null }, { "color": "blue", "value": 1 } ]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_motor_on{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_motor_on{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -150,11 +241,25 @@
       "id": 2,
       "type": "stat",
       "title": "Halted",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
       "description": "L5 safety: when on, all watering (manual+scheduled) is blocked. Not persistent across reboots.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "auto",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -163,21 +268,47 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "no", "color": "green" }, "1": { "text": "HALTED", "color": "red" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "no",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "HALTED",
+                  "color": "red"
+                }
+              }
+            }
           ],
           "thresholds": {
             "mode": "absolute",
-            "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_halted{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_halted{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -187,11 +318,25 @@
       "id": 3,
       "type": "stat",
       "title": "Overflow Latched",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
       "description": "L1 safety: rain-drop floor sensor latched. Persistent across reboots until /reset_overflow.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "auto",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -200,21 +345,47 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "no", "color": "green" }, "1": { "text": "LATCHED", "color": "red" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "no",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "LATCHED",
+                  "color": "red"
+                }
+              }
+            }
           ],
           "thresholds": {
             "mode": "absolute",
-            "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_overflow_latched{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_overflow_latched{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -224,10 +395,24 @@
       "id": 4,
       "type": "stat",
       "title": "Last Run (UTC)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "auto",
         "textMode": "value_and_name",
         "colorMode": "value",
@@ -236,16 +421,30 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
           "unit": "dateTimeAsIso",
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_schedule_last_run_unix{job=\"esp32_watering_mini\",device=~\"$device\"} * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_schedule_last_run_unix{job=\"esp32_watering\",device=~\"$device\"} * 1000",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -255,10 +454,24 @@
       "id": 5,
       "type": "stat",
       "title": "Next Run (UTC)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "auto",
         "textMode": "value_and_name",
         "colorMode": "value",
@@ -267,16 +480,30 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
           "unit": "dateTimeAsIso",
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_schedule_next_run_unix{job=\"esp32_watering_mini\",device=~\"$device\"} * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_schedule_next_run_unix{job=\"esp32_watering\",device=~\"$device\"} * 1000",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -287,35 +514,70 @@
       "type": "row",
       "title": "Watering History",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      }
     },
     {
       "id": 6,
       "type": "state-timeline",
-      "title": "Motor On — per device",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "title": "Motor On \u2014 per device",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
       "description": "One row per device. Blue bands = active watering cycles. Cycle start/end mapped to annotations.",
       "options": {
         "mergeValues": true,
         "showValue": "auto",
         "alignValue": "left",
         "rowHeight": 0.9,
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "custom": { "lineWidth": 0, "fillOpacity": 80 },
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80
+          },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "Off", "color": "green" }, "1": { "text": "Watering", "color": "blue" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Off",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Watering",
+                  "color": "blue"
+                }
+              }
+            }
           ]
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_motor_on{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_motor_on{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -325,11 +587,25 @@
       "id": 7,
       "type": "stat",
       "title": "Watering cycles (24h)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 14 },
-      "description": "Count of motor_on 0→1 transitions across the dashboard time range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "description": "Count of motor_on 0\u21921 transitions across the dashboard time range.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "value",
@@ -338,10 +614,17 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
-            "steps": [ { "color": "green", "value": null } ]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "short"
         },
@@ -349,8 +632,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (device) (changes(esp32_motor_on{job=\"esp32_watering_mini\",device=~\"$device\"}[$__range])) / 2",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (device) (changes(esp32_motor_on{job=\"esp32_watering\",device=~\"$device\"}[$__range])) / 2",
           "legendFormat": "{{device}}",
           "refId": "A",
           "instant": true
@@ -361,11 +647,25 @@
       "id": 8,
       "type": "stat",
       "title": "Consecutive skips (wet)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 14 },
-      "description": "Soil was already wet at scheduled time. Escalation signal — ≥2 triggers Telegram alert in firmware.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "description": "Soil was already wet at scheduled time. Escalation signal \u2014 \u22652 triggers Telegram alert in firmware.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -374,13 +674,24 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 2 },
-              { "color": "red", "value": 5 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           },
           "unit": "short"
@@ -389,8 +700,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_consecutive_skips_wet{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_consecutive_skips_wet{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -400,11 +714,25 @@
       "id": 9,
       "type": "stat",
       "title": "Emergency stops (overflow, 24h)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 14 },
-      "description": "Count of overflow_latched 0→1 transitions in range — these are L1-safety motor-off events.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "description": "Count of overflow_latched 0\u21921 transitions in range \u2014 these are L1-safety motor-off events.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -413,13 +741,24 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 3 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
             ]
           },
           "unit": "short"
@@ -428,8 +767,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (device) (changes(esp32_overflow_latched{job=\"esp32_watering_mini\",device=~\"$device\"}[$__range])) / 2",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (device) (changes(esp32_overflow_latched{job=\"esp32_watering\",device=~\"$device\"}[$__range])) / 2",
           "legendFormat": "{{device}}",
           "refId": "A",
           "instant": true
@@ -441,22 +783,49 @@
       "type": "row",
       "title": "Soil Moisture",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      }
     },
     {
       "id": 10,
       "type": "timeseries",
       "title": "Soil raw vs threshold",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 9, "w": 14, "x": 0, "y": 20 },
-      "description": "Headline panel. Lower raw = wetter. Each device has its own threshold line. Crossing below threshold = soil is wet → schedule will skip.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 20
+      },
+      "description": "Headline panel. Lower raw = wetter. Each device has its own threshold line. Crossing below threshold = soil is wet \u2192 schedule will skip.",
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "min", "max"] }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ]
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -465,7 +834,10 @@
             "pointSize": 5,
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
           },
           "unit": "short",
           "min": 0,
@@ -473,24 +845,45 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byRegexp", "options": "/threshold/" },
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/threshold/"
+            },
             "properties": [
-              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
-              { "id": "custom.fillOpacity", "value": 0 }
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
             ]
           }
         ]
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_soil_raw{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_soil_raw{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} raw",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_soil_threshold{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_soil_threshold{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} threshold",
           "refId": "B"
         }
@@ -500,16 +893,38 @@
       "id": 11,
       "type": "timeseries",
       "title": "Soil moisture %",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 9, "w": 10, "x": 14, "y": 20 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 20
+      },
       "description": "Calibrated percent (0% dry, 100% wet). Reads 0 if calibration is missing.",
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "min", "max"] }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "max"
+          ]
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 30,
@@ -519,7 +934,10 @@
             "showPoints": "never",
             "spanNulls": false,
             "gradientMode": "opacity",
-            "stacking": { "group": "A", "mode": "none" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
           },
           "unit": "percent",
           "min": 0,
@@ -529,8 +947,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_soil_pct{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_soil_pct{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -541,34 +962,69 @@
       "type": "row",
       "title": "Safety & Overflow",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      }
     },
     {
       "id": 12,
       "type": "state-timeline",
-      "title": "Overflow latched — per device",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 30 },
+      "title": "Overflow latched \u2014 per device",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
       "options": {
         "mergeValues": true,
         "showValue": "auto",
         "alignValue": "left",
         "rowHeight": 0.9,
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "custom": { "lineWidth": 0, "fillOpacity": 80 },
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80
+          },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "ok", "color": "green" }, "1": { "text": "LATCHED", "color": "red" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ok",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "LATCHED",
+                  "color": "red"
+                }
+              }
+            }
           ]
         },
         "overrides": []
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_overflow_latched{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_overflow_latched{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -578,16 +1034,33 @@
       "id": 13,
       "type": "timeseries",
       "title": "Overflow debounce streak / raw read",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 30 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
       "description": "streak = consecutive LOW reads (debouncer). raw = current GPIO read (1=dry, 0=wet floor).",
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -603,14 +1076,20 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_overflow_streak{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_overflow_streak{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} streak",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_overflow_raw{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_overflow_raw{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} raw",
           "refId": "B"
         }
@@ -621,21 +1100,43 @@
       "type": "row",
       "title": "Pipeline Health",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      }
     },
     {
       "id": 14,
       "type": "timeseries",
       "title": "WiFi RSSI",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 37 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 37
+      },
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -651,8 +1152,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_rssi{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_rssi{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -662,16 +1166,33 @@
       "id": 15,
       "type": "timeseries",
       "title": "Uptime (drops on reboot)",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 37 },
-      "description": "Drops to zero on each boot. Useful for spotting reboots — watchdog trips also show here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 37
+      },
+      "description": "Drops to zero on each boot. Useful for spotting reboots \u2014 watchdog trips also show here.",
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -687,8 +1208,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_uptime_ms{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_uptime_ms{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -698,16 +1222,33 @@
       "id": 16,
       "type": "timeseries",
       "title": "Log push attempts vs successes",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 37 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 37
+      },
       "description": "Diverging lines = Loki pipeline is dropping pushes. Check esp32-metrics-proxy and Loki.",
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -723,14 +1264,20 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_log_push_attempts{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_log_push_attempts{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} attempts",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_log_push_successes{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_log_push_successes{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}} successes",
           "refId": "B"
         }
@@ -740,10 +1287,24 @@
       "id": 17,
       "type": "stat",
       "title": "Telegram failures",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 44 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 44
+      },
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -752,13 +1313,24 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
             ]
           },
           "unit": "short"
@@ -767,8 +1339,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_telegram_failures{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_telegram_failures{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -778,11 +1353,25 @@
       "id": 18,
       "type": "stat",
       "title": "Log buffer count",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 44 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 44
+      },
       "description": "Entries pending push. 64 = buffer full, oldest entries are being dropped.",
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -791,13 +1380,24 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 32 },
-              { "color": "red", "value": 60 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 32
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
             ]
           },
           "unit": "short"
@@ -806,8 +1406,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_log_buffer_count{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_log_buffer_count{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -817,10 +1420,24 @@
       "id": 19,
       "type": "stat",
       "title": "Last log-push HTTP code",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 44 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
       "options": {
-        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
         "orientation": "horizontal",
         "textMode": "value_and_name",
         "colorMode": "background",
@@ -829,14 +1446,28 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 200 },
-              { "color": "yellow", "value": 300 },
-              { "color": "red", "value": 400 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 200
+              },
+              {
+                "color": "yellow",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 400
+              }
             ]
           },
           "unit": "short"
@@ -845,8 +1476,11 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_log_push_last_code{job=\"esp32_watering_mini\",device=~\"$device\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "esp32_log_push_last_code{job=\"esp32_watering\",device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "refId": "A"
         }
@@ -857,14 +1491,27 @@
       "type": "row",
       "title": "Live Logs",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 }
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      }
     },
     {
       "id": 20,
       "type": "logs",
-      "title": "Logs — $device",
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 14, "w": 18, "x": 0, "y": 49 },
+      "title": "Logs \u2014 $device",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 18,
+        "x": 0,
+        "y": 49
+      },
       "description": "Loki tail. Filter by level via the legend or by editing the query (`level=~\"info|warn|error\"`).",
       "options": {
         "dedupStrategy": "exact",
@@ -878,7 +1525,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki" },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "expr": "{job=\"esp32\",device=~\"$device\"}",
           "legendFormat": "",
           "refId": "A"
@@ -889,15 +1539,32 @@
       "id": 21,
       "type": "timeseries",
       "title": "Log volume by level (per device)",
-      "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 14, "w": 6, "x": 18, "y": 49 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 6,
+        "x": 18,
+        "y": 49
+      },
       "options": {
-        "tooltip": { "mode": "multi", "sort": "none" },
-        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "bars",
             "fillOpacity": 80,
@@ -906,7 +1573,10 @@
             "pointSize": 5,
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" }
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
           },
           "unit": "short",
           "min": 0
@@ -915,7 +1585,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki" },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "expr": "sum by (device, level) (count_over_time({job=\"esp32\",device=~\"$device\"}[5m]))",
           "legendFormat": "{{device}}/{{level}}",
           "refId": "A"
